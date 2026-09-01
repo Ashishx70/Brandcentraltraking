@@ -1,0 +1,99 @@
+from scrapers.factory import ScraperFactory
+import asyncio
+
+class TrackingService:
+    @staticmethod
+    async def track_shipments(shipments, task_id, progress_callback, capture_screenshot: bool = False):
+        total = len(shipments)
+        for i, shipment in enumerate(shipments):
+            awb = shipment["tracking_number"]
+            courier = shipment["courier"]
+            
+            # Notify progress
+            await progress_callback(
+                progress=int(((i) / total) * 100),
+                current_action=f"Tracking {awb} via {courier}...",
+                log_message=f"Starting tracking for {courier} AWB {awb}...",
+                log_level="info"
+            )
+            
+            scraper = ScraperFactory.get_scraper(courier)
+            if scraper:
+                try:
+                    # Log API call
+                    try:
+                        import sqlite3
+                        db_conn = sqlite3.connect("tracking.db")
+                        db_conn.execute("INSERT INTO api_usage DEFAULT VALUES;")
+                        db_conn.commit()
+                        db_conn.close()
+                    except Exception as db_err:
+                        print("Failed to record api usage in service:", db_err)
+
+                    result = await scraper.track(awb, capture_screenshot=capture_screenshot)
+                    
+                    from datetime import datetime
+                    last_sync_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+                    
+                    shipment["status"] = result["status"]
+                    shipment["last_location"] = result["last_location"]
+                    shipment["timestamp"] = result["timestamp"]
+                    shipment["last_sync"] = last_sync_str
+                    shipment["screenshot"] = result.get("screenshot", "-")
+                    
+                    log_level = "success" if "delivered" in result["status"].lower() else "info"
+                    if "error" in result["status"].lower() or "invalid" in result["status"].lower():
+                        log_level = "error"
+                        
+                    await progress_callback(
+                        progress=int(((i + 1) / total) * 100),
+                        current_action=f"Finished tracking {awb}",
+                        log_message=f"Successfully scraped {courier} AWB {awb}. Status: {result['status']}",
+                        log_level=log_level
+                    )
+                except Exception as e:
+                    import traceback
+                    tb = traceback.format_exc()
+                    print(f"--- SCRAPER EXCEPTION TRACEBACK ---\n{tb}------------------------------------")
+                    error_msg = str(e) or type(e).__name__
+                    from datetime import datetime
+                    last_sync_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
+                    
+                    shipment["status"] = "Scrape Failed"
+                    shipment["last_location"] = error_msg
+                    shipment["last_sync"] = last_sync_str
+                    await progress_callback(
+                        progress=int(((i + 1) / total) * 100),
+                        current_action=f"Error tracking {awb}",
+                        log_message=f"Error scraping {courier} AWB {awb}: {error_msg}",
+                        log_level="error"
+                    )
+            else:
+                # Fallback mock/warning if scraper not implemented yet
+                shipment["status"] = "Scraper Not Implemented"
+                shipment["last_location"] = "Service pending integration"
+                await progress_callback(
+                    progress=int(((i + 1) / total) * 100),
+                    current_action=f"Skipping {awb}",
+                    log_message=f"Scraper for courier '{courier}' is not implemented yet. Skipping AWB {awb}.",
+                    log_level="warning"
+                )
+            
+            # Smart delay: fast for API-based couriers, safe for browser-based scrapers
+            c_lower = courier.lower()
+            if not capture_screenshot and any(c in c_lower for c in ["delhivery", "ekart", "bluedart"]):
+                delay = 0.1
+            elif "bluedart" in c_lower:
+                delay = 1.0
+            else:
+                delay = 0.5
+            await asyncio.sleep(delay)
+            
+        # Final update
+        await progress_callback(
+            progress=100,
+            current_action="Tracking run completed",
+            log_message="All tracking numbers processed.",
+            log_level="success"
+        )
+

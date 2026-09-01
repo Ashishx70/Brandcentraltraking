@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brandcentral TrackShip - Smart Courier Tracking Dashboard</title>
+    <meta name="description" content="Automated courier tracking dashboard supporting multiple logistics partners.">
+    <link rel="icon" type="image/png" href="/static/icon.png">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/style.css?v=1.1.0">
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-section">
+                <div class="logo-icon-img" style="display: flex; align-items: center; justify-content: center;">
+                    <img src="/static/icon.png" alt="Logo" style="width: 38px; height: 38px; border-radius: var(--radius-md); object-fit: contain;">
+                </div>
+                <div class="logo-text">
+                    <h1>Brandcentral TrackShip</h1>
+                    <span>Courier Tracking System</span>
+                </div>
+            </div>
+            
+            <!-- Slim Stats Row inside Header -->
+            <div class="header-stats" id="stats-section">
+                <div class="header-stat">
+                    <span class="stat-lbl">Total:</span>
+                    <span class="stat-val" id="stat-total">0</span>
+                </div>
+                <div class="header-stat">
+                    <span class="stat-lbl text-delivered">Delivered:</span>
+                    <span class="stat-val text-delivered" id="stat-delivered">0</span>
+                </div>
+                <div class="header-stat">
+                    <span class="stat-lbl text-transit">In Transit:</span>
+                    <span class="stat-val text-transit" id="stat-transit">0</span>
+                </div>
+                <div class="header-stat">
+                    <span class="stat-lbl text-failed">Exceptions:</span>
+                    <span class="stat-val text-failed" id="stat-failed">0</span>
+                </div>
+                <div class="header-stat">
+                    <span class="stat-lbl text-api">API Hits:</span>
+                    <span class="stat-val text-api" id="stat-api">0</span>
+                </div>
+            </div>
+
+            <div class="header-actions">
+                <div class="server-status">
+                    <span class="status-dot online"></span>
+                    <span>API Connected</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Controls Grid -->
+        <div class="controls-grid">
+            <!-- Slim Control Bar -->
+            <section class="controls-bar" id="controls-panel">
+                <!-- Slim Upload Input -->
+                <div class="control-group upload-group">
+                    <div class="drop-zone" id="drop-zone">
+                        <i data-lucide="folder-up" class="upload-icon"></i>
+                        <span class="drop-text">Drag & drop sheet or <span class="browse-btn">browse files</span></span>
+                        <input type="file" id="file-input" accept=".csv, .xlsx, .xls" hidden>
+                    </div>
+                    
+                    <div class="selected-file-container" id="selected-file-container" style="display: none;">
+                        <div class="file-info-box">
+                            <i data-lucide="file-spreadsheet" class="file-icon"></i>
+                            <span class="file-name" id="selected-file-name">filename.csv</span>
+                            <span class="file-size" id="selected-file-size">0 KB</span>
+                            <button class="remove-file-btn" id="remove-file-btn" title="Remove file">
+                                <i data-lucide="x"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <a href="/static/sample_upload.xlsx" download class="sample-link" style="font-size: 0.75rem; white-space: nowrap; margin-left: 10px;">📥 Sample Excel</a>
+                </div>
+
+                <!-- Slim Progress Bar -->
+                <div class="control-group progress-group" id="progress-panel" style="visibility: hidden;">
+                    <div class="progress-info">
+                        <span class="progress-status-text" id="progress-text">Awaiting start...</span>
+                        <span class="progress-percentage" id="progress-percent">0%</span>
+                    </div>
+                    <div class="progress-bar-wrapper">
+                        <div class="progress-bar-fill" id="progress-bar-fill" style="width: 0%;"></div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons & Mode Switch -->
+                <div class="control-group buttons-group">
+                    <div class="mode-toggle-container" title="Fast Mode fetches tracking instantly. Screenshot Mode captures proof images.">
+                        <label class="switch">
+                            <input type="checkbox" id="screenshot-toggle">
+                            <span class="slider round"></span>
+                        </label>
+                        <span class="mode-toggle-text" id="mode-toggle-label">
+                            <span class="fast-badge">⚡ Fast Track</span>
+                        </span>
+                    </div>
+
+                    <button class="btn btn-primary" id="start-tracking-btn" disabled>
+                        <i data-lucide="play"></i> Sync All
+                    </button>
+                    <button class="btn btn-success" id="export-btn" disabled>
+                        <i data-lucide="file-spreadsheet"></i> Export Excel
+                    </button>
+                    <button class="btn btn-danger" id="clear-all-btn" disabled>
+                        <i data-lucide="trash-2"></i> Clear All
+                    </button>
+                </div>
+            </section>
+
+            <!-- Quick Track Panel -->
+            <section class="controls-bar quick-track-bar" id="quick-track-panel">
+                <div class="quick-track-title">
+                    <span class="quick-title">Quick Single Track</span>
+                    <span class="quick-subtitle">Track without file</span>
+                </div>
+                <div class="quick-track-form">
+                    <input type="text" id="quick-awb-input" placeholder="Enter AWB No...">
+                    <select id="quick-courier-select">
+                        <option value="" disabled selected>Select Courier</option>
+                        <option value="bluedart">Blue Dart</option>
+                        <option value="delhivery">Delhivery</option>
+                        <option value="dtdc">DTDC</option>
+                        <option value="ecomexpress">Ecom Express</option>
+                        <option value="ekart">Ekart</option>
+                        <option value="indiapost">India Post</option>
+                        <option value="shadowfax">Shadowfax</option>
+                        <option value="xpressbees">Xpressbees</option>
+                    </select>
+                    <button class="btn btn-primary" id="quick-track-btn">
+                        <i data-lucide="plus"></i> Add & Track
+                    </button>
+                </div>
+            </section>
+        </div>
+
+        <!-- Main Content -->
+        <main class="dashboard-main">
+            <section class="dashboard-card results-card" id="results-panel">
+                <div class="results-header">
+                    <div>
+                        <h2>Shipment Directory</h2>
+                        <p class="card-subtitle">Manage and search your scanned tracking status</p>
+                    </div>
+                    
+                    <!-- Search and Filter Bar -->
+                    <div class="filters-bar">
+                        <div class="search-box">
+                            <i data-lucide="search" class="search-icon"></i>
+                            <input type="text" id="search-input" placeholder="Search AWB or courier...">
+                        </div>
+                        <div class="filter-dropdowns">
+                            <select id="filter-courier">
+                                <option value="all">All Couriers</option>
+                                <option value="bluedart">Blue Dart</option>
+                                <option value="delhivery">Delhivery</option>
+                                <option value="dtdc">DTDC</option>
+                                <option value="ecomexpress">Ecom Express</option>
+                                <option value="ekart">Ekart</option>
+                                <option value="indiapost">India Post</option>
+                                <option value="shadowfax">Shadowfax</option>
+                                <option value="xpressbees">Xpressbees</option>
+                            </select>
+                            <select id="filter-status">
+                                <option value="all">All Statuses</option>
+                                <option value="delivered">Delivered</option>
+                                <option value="transit">In Transit</option>
+                                <option value="out_for_delivery">Out for Delivery</option>
+                                <option value="exception">Failed / Exception</option>
+                                <option value="pending">Pending</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Table Container -->
+                <div class="table-outer-container">
+                    <table class="results-table" id="results-table">
+                        <thead>
+                            <tr>
+                                <th data-col="invoice_no">
+                                    <div class="header-content">
+                                        <span>Invoice No.</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="tracking_number">
+                                    <div class="header-content">
+                                        <span>AWB No.</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="courier">
+                                    <div class="header-content">
+                                        <span>Courier Partner</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="platform_status">
+                                    <div class="header-content">
+                                        <span>Platform Status</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="status">
+                                    <div class="header-content">
+                                        <span>Status</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="last_location">
+                                    <div class="header-content">
+                                        <span>Last Location</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="timestamp">
+                                    <div class="header-content">
+                                        <span>Timestamp</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="last_sync">
+                                    <div class="header-content">
+                                        <span>Last Sync</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="screenshot">
+                                    <div class="header-content">
+                                        <span>Screenshot</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th style="width: 100px; text-align: center;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body">
+                            <tr class="empty-row">
+                                <td colspan="10">
+                                    <div class="empty-state">
+                                        <i data-lucide="file-warning"></i>
+                                        <p>No shipments tracked yet. Upload a sheet to get started.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination Container -->
+                <div class="pagination-container">
+                    <button class="btn btn-pagination" id="prev-page-btn" disabled>
+                        <i data-lucide="chevron-left"></i> Previous
+                    </button>
+                    <div class="pagination-info">
+                        <span>Page</span>
+                        <span id="current-page-num" class="current-page-label">1</span>
+                        <span>of</span>
+                        <span id="total-pages-num" class="total-pages-label">1</span>
+                    </div>
+                    <button class="btn btn-pagination" id="next-page-btn" disabled>
+                        Next <i data-lucide="chevron-right"></i>
+                    </button>
+                    <div class="pagination-go-to">
+                        <span>Go to page:</span>
+                        <input type="number" id="goto-page-input" min="1" value="1">
+                        <button class="btn btn-go" id="goto-page-btn">Go</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Custom Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="modal-header-section">
+                <i data-lucide="alert-triangle" class="modal-warning-icon"></i>
+                <h3>Delete All Tracking Data?</h3>
+            </div>
+            <div class="modal-body-section">
+                <p>Kya aap sach me saara data delete karna chahte hain? Ye action undo nahi kiya ja sakta.</p>
+            </div>
+            <div class="modal-actions-section">
+                <button class="btn btn-secondary" id="modal-cancel-btn" style="background-color: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; font-weight: 500;">Cancel</button>
+                <button class="btn btn-danger" id="modal-confirm-btn" style="background-color: #ef4444; color: white; border: none; font-weight: 500;">Yes, Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Custom Single AWB Result Modal -->
+    <div id="result-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-card result-modal-card">
+            <div class="modal-header-section" style="border-bottom: 1px solid var(--card-border); padding-bottom: 12px; margin-bottom: 16px; display: flex; align-items: center;">
+                <i data-lucide="shield-check" class="modal-success-icon" style="width: 48px; height: 48px; color: #10b981; background-color: #d1fae5; padding: 10px; border-radius: 50%;"></i>
+                <h3 style="margin-left: 12px; margin-top: 0; margin-bottom: 0;">Tracking Details Found</h3>
+                <button class="modal-close-x" id="result-modal-close-x" style="background: none; border: none; cursor: pointer; color: var(--text-muted); margin-left: auto; display: flex; align-items: center; padding: 4px;">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            
+            <div class="modal-body-section" style="display: flex; flex-direction: column; gap: 14px; text-align: left;">
+                <div class="result-row">
+                    <span class="result-label">AWB Number:</span>
+                    <span class="result-value monospace-val" id="res-awb">-</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">Courier Partner:</span>
+                    <span id="res-courier">-</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">Current Status:</span>
+                    <span id="res-status">-</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">Last Location:</span>
+                    <span class="result-value" id="res-location">-</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">Last Event Time:</span>
+                    <span class="result-value" id="res-timestamp">-</span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">Screenshot:</span>
+                    <span id="res-screenshot">-</span>
+                </div>
+                <div class="result-row screenshot-preview-row" id="res-screenshot-preview-row" style="display: none; flex-direction: column; gap: 8px;">
+                    <span class="result-label">Screenshot Preview:</span>
+                    <div style="border: 1px solid var(--card-border); border-radius: var(--radius-md); overflow: hidden; background-color: #f8fafc; display: flex; align-items: center; justify-content: center; padding: 4px;">
+                        <img id="res-screenshot-img" src="" alt="Screenshot" style="max-width: 100%; max-height: 250px; object-fit: contain; border-radius: var(--radius-sm);">
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-actions-section" style="margin-top: 24px; display: flex; justify-content: center;">
+                <button class="btn btn-primary" id="result-modal-close-btn" style="width: 100%; justify-content: center;">
+                    <i data-lucide="check"></i> Done
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Script -->
+    <script src="/static/app.js?v=1.1.0"></script>
+</body>
+</html>
