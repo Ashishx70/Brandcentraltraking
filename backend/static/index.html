@@ -191,6 +191,36 @@
                     <table class="results-table" id="results-table">
                         <thead>
                             <tr>
+                                <th data-col="channel">
+                                    <div class="header-content">
+                                        <span>Channel</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="seller_name">
+                                    <div class="header-content">
+                                        <span>Seller Name</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="return_date">
+                                    <div class="header-content">
+                                        <span>Return Date</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="mp_date">
+                                    <div class="header-content">
+                                        <span>MP Date</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
+                                <th data-col="days_left">
+                                    <div class="header-content">
+                                        <span>Days Left</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
                                 <th data-col="invoice_no">
                                     <div class="header-content">
                                         <span>Invoice No.</span>
@@ -250,7 +280,7 @@
                         </thead>
                         <tbody id="table-body">
                             <tr class="empty-row">
-                                <td colspan="10">
+                                <td colspan="15">
                                     <div class="empty-state">
                                         <i data-lucide="file-warning"></i>
                                         <p>No shipments tracked yet. Upload a sheet to get started.</p>

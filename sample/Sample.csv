@@ -1,3 +1,6 @@
-AWB,Courier
-123456789,Delhivery
-987654321,Blue Dart
+Channel,Seller Name,Return Date,MP Date,Days Left,Invoice No,AWB,Courier,Platform Status
+Amazon,BrandCentral,15-09-2026,12-09-2026,5,INV-001,195042600200336,Delhivery,Shipped
+Flipkart,BrandCentral,14-09-2026,11-09-2026,4,INV-002,195042600200337,Xpressbees,In Transit
+Meesho,BrandCentral,13-09-2026,10-09-2026,3,INV-003,987654321,Blue Dart,Pending
+Myntra,BrandCentral,12-09-2026,09-09-2026,2,INV-004,554483221,DTDC,Delivered
+

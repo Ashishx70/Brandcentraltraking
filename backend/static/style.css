@@ -597,7 +597,7 @@ input:checked + .slider:before {
 
 .results-table {
     width: 100%;
-    min-width: 1280px;
+    min-width: 1750px;
     border-collapse: collapse;
     text-align: left;
     font-size: 1.05rem;
