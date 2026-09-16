@@ -32,6 +32,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path.lower()
+    if path.endswith(".js") or path.endswith(".css") or path.endswith(".html") or path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 SCREENSHOTS_DIR = os.path.join(STATIC_DIR, "screenshots")
@@ -219,7 +229,18 @@ class ExportDirectRequest(BaseModel):
 
 @app.get('/')
 def root():
-    return FileResponse("static/index.html")
+    return FileResponse("static/index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+
+def clean_date_str(val) -> str:
+    if not val or pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if s.endswith(" 00:00:00"):
+        s = s[:-9].strip()
+    if len(s) == 10 and s[4] == '-' and s[7] == '-':
+        parts = s.split("-")
+        return f"{parts[2]}-{parts[1]}-{parts[0]}"
+    return s
 
 def clean_tracking_number(awb_val) -> str:
     if pd.isna(awb_val):
@@ -270,9 +291,9 @@ async def upload_file(file: UploadFile = File(...)):
 
     channel_aliases = ['channel', 'channels', 'sales channel', 'platform']
     seller_name_aliases = ['seller name', 'seller_name', 'seller', 'vendor', 'sellername']
-    return_date_aliases = ['return date', 'return_date', 'ret date', 'ret_date']
-    mp_date_aliases = ['mp date', 'mp_date', 'marketplace date']
-    days_left_aliases = ['days left', 'days_left', 'days']
+    return_date_aliases = ['return date', 'return_date', 'ret date', 'ret_date', 'retum date', 'retum_date', 'retum', 'return_dt', 'ret_dt']
+    mp_date_aliases = ['mp date', 'mp_date', 'marketplace date', 'mp date.', 'marketplace_date']
+    days_left_aliases = ['days left', 'days_left', 'days', 'daysleft', 'day left', 'day_left']
     invoice_aliases = ['invoice no', 'invoice_no', 'invoice no.', 'invoice', 'invoice number', 'inv no', 'inv_no', 'invoice#', 'inv']
     awb_aliases = ['awb', 'awb no', 'awb no.', 'awb number', 'tracking number', 'tracking_number', 'tracking no', 'tracking_no', 'tracking #', 'waybill']
     courier_aliases = ['courier', 'courier partner', 'courier_partner', 'courier name', 'courier_name', 'partner', 'logistic', 'logistics']
@@ -285,8 +306,8 @@ async def upload_file(file: UploadFile = File(...)):
             for row in csv_reader:
                 channel = find_col_value(row, channel_aliases)
                 seller_name = find_col_value(row, seller_name_aliases)
-                return_date = find_col_value(row, return_date_aliases)
-                mp_date = find_col_value(row, mp_date_aliases)
+                return_date = clean_date_str(find_col_value(row, return_date_aliases))
+                mp_date = clean_date_str(find_col_value(row, mp_date_aliases))
                 days_left = find_col_value(row, days_left_aliases)
                 invoice = find_col_value(row, invoice_aliases)
                 awb = find_col_value(row, awb_aliases)
@@ -319,8 +340,8 @@ async def upload_file(file: UploadFile = File(...)):
                 row_dict = row.to_dict()
                 channel = find_col_value(row_dict, channel_aliases)
                 seller_name = find_col_value(row_dict, seller_name_aliases)
-                return_date = find_col_value(row_dict, return_date_aliases)
-                mp_date = find_col_value(row_dict, mp_date_aliases)
+                return_date = clean_date_str(find_col_value(row_dict, return_date_aliases))
+                mp_date = clean_date_str(find_col_value(row_dict, mp_date_aliases))
                 days_left = find_col_value(row_dict, days_left_aliases)
                 invoice = find_col_value(row_dict, invoice_aliases)
                 awb = find_col_value(row_dict, awb_aliases)

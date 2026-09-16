@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const statFailed = document.getElementById('stat-failed');
     const statApi = document.getElementById('stat-api');
 
-    const SESSION_KEY = 'trackship_session_state';
+    const SESSION_KEY = 'trackship_session_state_v3';
 
     // Application State
     let state = {
