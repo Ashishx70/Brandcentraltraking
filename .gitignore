@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.class
+*.db
+backend/tracking.db
+backend/uploads/
+backend/outputs/
+backend/static/screenshots/*.png
+.env
+.venv/
+cloudflared.exe
+config.yml
+*.log
+venv/
+scratch/

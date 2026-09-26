@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+playwright
+pandas
+openpyxl
+python-multipart
+requests
+beautifulsoup4
+Pillow
