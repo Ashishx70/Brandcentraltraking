@@ -206,7 +206,7 @@ class BlueDartScraper(BaseScraper):
                         cookies.forEach(c => c.remove());
                         const chats = document.querySelectorAll('[id*="chat"], [class*="chat"], .livechat, [aria-label*="chat"]');
                         chats.forEach(c => c.remove());
-                        document.documentElement.style.zoom = '65%';
+                        document.documentElement.style.zoom = '80%';
                         window.scrollTo(0, 0);
                     }""")
                 except Exception:

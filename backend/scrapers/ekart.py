@@ -165,7 +165,7 @@ class EkartScraper(BaseScraper):
                 # Zoom out Ekart page so full Tracking Details table fits on a single screen
                 try:
                     await page.evaluate("""() => {
-                        document.documentElement.style.zoom = '65%';
+                        document.documentElement.style.zoom = '80%';
                         window.scrollTo(0, 0);
                     }""")
                 except Exception:

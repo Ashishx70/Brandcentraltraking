@@ -597,17 +597,32 @@ class XpressBeesScraper(BaseScraper):
                 except Exception as view_err:
                     print(f"[Xpressbees] View click note: {view_err}")
 
-                # Zoom out XpressBees page so all details fit on a single screen
+                # Zoom out XpressBees page with crisp text rendering and compact vertical spacing so all details fit
                 try:
                     await page.evaluate("""() => {
-                        document.documentElement.style.zoom = '50%';
-                        const allEls = Array.from(document.querySelectorAll('p, span, div'));
+                        const style = document.createElement('style');
+                        style.innerHTML = `
+                            * {
+                                -webkit-font-smoothing: antialiased !important;
+                                text-rendering: geometricPrecision !important;
+                            }
+                        `;
+                        document.head.appendChild(style);
+
+                        const allEls = Array.from(document.querySelectorAll('p, span, div, section'));
                         allEls.forEach(el => {
                             if (el.children.length === 0 && el.textContent && el.textContent.includes('complete the CAPTCHA')) {
                                 el.style.display = 'none';
                             }
+                            const cs = window.getComputedStyle(el);
+                            if (parseFloat(cs.marginTop) > 14) el.style.marginTop = '6px';
+                            if (parseFloat(cs.marginBottom) > 14) el.style.marginBottom = '6px';
+                            if (parseFloat(cs.paddingTop) > 14) el.style.paddingTop = '6px';
+                            if (parseFloat(cs.paddingBottom) > 14) el.style.paddingBottom = '6px';
                         });
-                        window.scrollTo(0, 150);
+
+                        document.documentElement.style.zoom = '62%';
+                        window.scrollTo(0, 175);
                     }""")
                     await asyncio.sleep(0.6)
                 except Exception:
