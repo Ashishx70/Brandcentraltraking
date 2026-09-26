@@ -162,8 +162,28 @@ class EkartScraper(BaseScraper):
                     content = await page.content()
                     if clean_awb in content and any(k in content for k in ["Tracking Details", "Status", "Delivered", "Picked", "Awaiting", "Shipment"]):
                         break
-                await asyncio.sleep(1.0)
-                await page.screenshot(path=screenshot_file, full_page=True)
+                # Zoom out Ekart page so full Tracking Details table fits on a single screen
+                try:
+                    await page.evaluate("""() => {
+                        document.documentElement.style.zoom = '65%';
+                        window.scrollTo(0, 0);
+                    }""")
+                except Exception:
+                    pass
+                await asyncio.sleep(0.8)
+                await page.bring_to_front()
+                await page.screenshot(path=screenshot_file, full_page=False)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Ekart",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.ekartlogistics.com/ekartlogistics-web/shipmenttrack/{clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception as fe:
+                    print(f"[DesktopFrame] Ekart error: {fe}")
                 return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_ek:
                 print(f"[Ekart] Official screenshot error: {e_ek}, falling back to TrackCourier...")
@@ -171,6 +191,17 @@ class EkartScraper(BaseScraper):
                 await page.goto(f"https://trackcourier.io/track-and-trace/ekart-logistics/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Ekart",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.ekartlogistics.com/ekartlogistics-web/shipmenttrack/{clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception:
+                    pass
                 return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Ekart] Screenshot capture failed for {clean_awb}: {e}")
@@ -181,6 +212,11 @@ class EkartScraper(BaseScraper):
                     await page.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()

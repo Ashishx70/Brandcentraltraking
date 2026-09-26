@@ -505,7 +505,6 @@ class XpressBeesScraper(BaseScraper):
 
             try:
                 # 1. Primary: Official XpressBees website with full View details
-                await page.set_viewport_size({"width": 1280, "height": 1800})
                 official_url = f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
                 await page.goto(official_url, wait_until="domcontentloaded", timeout=40000)
                 await asyncio.sleep(1.5)
@@ -520,34 +519,25 @@ class XpressBeesScraper(BaseScraper):
                         cb = page.locator("altcha-widget input[type='checkbox'], .altcha-checkbox input, input[type='checkbox'], #altcha_checkbox").first
                         if await cb.count() > 0:
                             await cb.click()
-                            # Poll up to 50 seconds for slow CPU environments like Render
-                            for _ in range(100):
+                            # Wait for Altcha PoW verification to actually complete (not just checkbox checked)
+                            for attempt_v in range(60):
                                 await asyncio.sleep(0.5)
                                 is_verified = await page.evaluate("""() => {
                                     const w = document.querySelector('altcha-widget, .altcha');
                                     if (w && (w.getAttribute('state') === 'verified' || w.getAttribute('data-state') === 'verified' || w.classList.contains('verified'))) return true;
-                                    const cb = document.querySelector('altcha-widget input[type="checkbox"], input[type="checkbox"]');
-                                    if (cb && cb.checked) return true;
-                                    const checkedSvg = document.querySelector('.altcha svg, .altcha [class*="check"]');
-                                    if (checkedSvg) return true;
+                                    const hiddenInp = document.querySelector('input[name="altcha"]');
+                                    if (hiddenInp && hiddenInp.value && hiddenInp.value.length > 10) return true;
                                     return false;
                                 }""")
-                                if is_verified:
+                                if is_verified or attempt_v >= 7:
                                     break
-                            await asyncio.sleep(1.0)
+                            await asyncio.sleep(0.8)
 
-                        # Trigger form submit via locator, Enter key, and DOM submit
+                        # Trigger form submit via submit button
                         try:
                             btn = page.locator("form button[type='submit'], button.sc-fTyFcS").first
                             if await btn.count() > 0:
                                 await btn.click()
-                        except Exception:
-                            pass
-
-                        try:
-                            inp = page.locator("input[type='text']").first
-                            if await inp.count() > 0:
-                                await inp.press("Enter")
                         except Exception:
                             pass
 
@@ -560,8 +550,6 @@ class XpressBeesScraper(BaseScraper):
                                 (b.type === 'submit' && b.querySelector('img'))
                             );
                             if (arrow) arrow.click();
-                            const f = document.querySelector('form');
-                            if (f && f.requestSubmit) f.requestSubmit();
                         }""")
                     except Exception as altcha_err:
                         print(f"[Xpressbees] Altcha interaction note: {altcha_err}")
@@ -573,14 +561,14 @@ class XpressBeesScraper(BaseScraper):
                     content = await page.content()
                     if any(k in content for k in [
                         "Your Domestic Shipments", "Shipping Details", "Shipment History",
-                        "Return Delivered", "Delivered", "In Transit", "Data Received",
+                        "Return Delivered", "Data Received",
                         "RPCancel", "Rpcancel", "OutForPickUp", "No Records"
                     ]):
                         results_ready = True
                         break
 
-                    # Retry pressing Enter / submit if results haven't appeared by second 5 or 10
-                    if s in [5, 10] and not results_ready:
+                    # Retry pressing Enter / submit if results haven't appeared by second 4 or 8
+                    if s in [4, 8] and not results_ready:
                         try:
                             await page.locator("input[type='text']").first.press("Enter")
                             await page.evaluate("""() => {
@@ -590,38 +578,54 @@ class XpressBeesScraper(BaseScraper):
                         except Exception:
                             pass
 
-                # Click 'View' to expand full Shipping Details and Shipment History
+                # Click 'View' once to expand full Shipping Details and Shipment History
                 try:
+                    await asyncio.sleep(0.6)
                     await page.evaluate("""() => {
                         const all = Array.from(document.querySelectorAll('*'));
                         const viewEl = all.find(e => e.children.length === 0 && e.textContent.trim() === 'View');
                         if (viewEl) {
                             viewEl.click();
-                            if (viewEl.parentElement) viewEl.parentElement.click();
                         }
                     }""")
-                    for _ in range(12):
+                    for _ in range(16):
                         await asyncio.sleep(0.5)
                         content = await page.content()
                         if "Shipping Details" in content or "Shipment History" in content:
                             break
-                    await asyncio.sleep(1.5)
-                except Exception:
-                    pass
+                    await asyncio.sleep(1.0)
+                except Exception as view_err:
+                    print(f"[Xpressbees] View click note: {view_err}")
 
-                # Scroll navbar into view so the official logo and full details are prominent
+                # Zoom out XpressBees page so all details fit on a single screen
                 try:
                     await page.evaluate("""() => {
-                        const nav = document.querySelector('header, .navbar, .sc-dlnjPT');
-                        if (nav) {
-                            nav.scrollIntoView({ behavior: 'instant', block: 'start' });
-                        }
+                        document.documentElement.style.zoom = '50%';
+                        const allEls = Array.from(document.querySelectorAll('p, span, div'));
+                        allEls.forEach(el => {
+                            if (el.children.length === 0 && el.textContent && el.textContent.includes('complete the CAPTCHA')) {
+                                el.style.display = 'none';
+                            }
+                        });
+                        window.scrollTo(0, 150);
                     }""")
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.6)
                 except Exception:
                     pass
 
+                await page.bring_to_front()
                 await page.screenshot(path=screenshot_file, full_page=False)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.xpressbees.com/track?isawb=Yes&trackid={clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception as fe:
+                    print(f"[DesktopFrame] Xpressbees error: {fe}")
                 return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_xb:
                 print(f"[Xpressbees] Official screenshot error: {e_xb}, falling back to TrackCourier...")
@@ -629,6 +633,17 @@ class XpressBeesScraper(BaseScraper):
                 await page.goto(f"https://trackcourier.io/track-and-trace/xpressbees-logistics/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.xpressbees.com/track?isawb=Yes&trackid={clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception:
+                    pass
                 return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Xpressbees] Screenshot capture failed for {clean_awb}: {e}")
@@ -639,4 +654,9 @@ class XpressBeesScraper(BaseScraper):
                     await page.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 

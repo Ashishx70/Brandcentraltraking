@@ -39,7 +39,7 @@ app.add_middleware(
 async def add_no_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.lower()
-    if path.endswith(".js") or path.endswith(".css") or path.endswith(".html") or path == "/":
+    if path.endswith(".js") or path.endswith(".css") or path.endswith(".html") or path == "/" or "/screenshots/" in path:
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -88,10 +88,6 @@ async def serve_screenshot(filename: str):
     3. If capture fails or times out, seamlessly redirects to live official courier tracking page.
     Never returns 404!
     """
-    file_path = os.path.join(SCREENSHOTS_DIR, filename)
-    if os.path.exists(file_path):
-        return FileResponse(file_path, media_type="image/png")
-    
     raw_name = filename.replace(".png", "").strip()
     courier = ""
     if "_" in raw_name:
@@ -104,6 +100,10 @@ async def serve_screenshot(filename: str):
                 break
     else:
         awb = raw_name
+
+    file_path = os.path.join(SCREENSHOTS_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="image/png")
 
     # Check if any matching screenshot file already exists for this AWB
     try:
@@ -163,6 +163,13 @@ async def serve_screenshot(filename: str):
     # Fallback to official tracking URL so clicking link in Excel always works
     direct_url = get_courier_direct_url(courier, awb)
     return RedirectResponse(url=direct_url, status_code=307)
+
+@app.get('/download/{filename}')
+async def download_single_file(filename: str):
+    file_path = os.path.join(SCREENSHOTS_DIR, filename)
+    if os.path.exists(file_path):
+        return FileResponse(file_path, filename=filename, media_type="image/png")
+    raise HTTPException(status_code=404, detail="File not found")
 
 # Mount static folder
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

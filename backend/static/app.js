@@ -163,8 +163,8 @@ document.addEventListener('DOMContentLoaded', () => {
         isTracking: false,
         progress: 0,
         taskId: null,
-        captureScreenshot: false, // Bulk / Excel Tracking Mode (Default Fast Mode)
-        quickCaptureScreenshot: false, // Quick Single Track Mode (Default Fast Mode)
+        captureScreenshot: false, // Bulk / Excel Tracking Mode (Default OFF / Fast Track)
+        quickCaptureScreenshot: false, // Quick Single Track Mode (Default OFF / Fast Track)
         shipments: [], // Full list of shipments tracked
         filteredShipments: [], // Screen filtered list
         stats: { total: 0, delivered: 0, transit: 0, failed: 0, api_calls: 0 },
@@ -210,6 +210,7 @@ document.addEventListener('DOMContentLoaded', () => {
         updateBulkModeToggleUI();
         updateQuickModeToggleUI();
     }
+    updateModeToggleUI();
 
     function updateSelectionUI() {
         if (!state.selectedAwbs) state.selectedAwbs = new Set();
@@ -310,12 +311,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     state.activeColumnFilters = saved.activeColumnFilters || {};
                     state.isTracking = !!saved.isTracking;
                     state.progress = saved.progress || 0;
-                    if (saved.captureScreenshot !== undefined) {
-                        state.captureScreenshot = !!saved.captureScreenshot;
-                    }
-                    if (saved.quickCaptureScreenshot !== undefined) {
-                        state.quickCaptureScreenshot = !!saved.quickCaptureScreenshot;
-                    }
+                    state.captureScreenshot = false;
+                    state.quickCaptureScreenshot = false;
                     updateModeToggleUI();
 
                     if (saved.fileSelected && saved.fileName) {
@@ -1294,8 +1291,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Determine screenshot column markup
             const hasScreenshot = item.screenshot && item.screenshot !== '-';
+            const screenshotUrl = hasScreenshot ? `${item.screenshot.split('?')[0]}?t=${Date.now()}` : '';
             const screenshotHtml = hasScreenshot ? 
-                `<a href="${item.screenshot}" download target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>` : 
+                `<a href="${screenshotUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>` : 
                 `<span class="gallery-icon-link no-screenshot" title="No screenshot captured (Fast Track)"><img src="/static/gallery_icon_red.png?v=3.4.0" alt="No Screenshot"></span>`;
 
             const isChecked = state.selectedAwbs && state.selectedAwbs.has(item.tracking_number);
@@ -1550,8 +1548,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const hasScreenshot = data.screenshot && data.screenshot !== '-';
             if (hasScreenshot) {
-                resScreenshot.innerHTML = `<a href="${data.screenshot}" download target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>`;
-                previewImg.src = data.screenshot;
+                const freshUrl = `${data.screenshot.split('?')[0]}?t=${Date.now()}`;
+                resScreenshot.innerHTML = `<a href="${freshUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>`;
+                previewImg.src = freshUrl;
                 previewRow.style.display = 'flex';
             } else {
                 resScreenshot.innerHTML = `<span class="gallery-icon-link no-screenshot" title="No screenshot captured (Fast Track)"><img src="/static/gallery_icon_red.png?v=3.4.0" alt="No Screenshot"></span>`;

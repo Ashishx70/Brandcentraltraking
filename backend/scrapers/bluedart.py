@@ -199,19 +199,33 @@ class BlueDartScraper(BaseScraper):
                     if any(k in content for k in ["Shipment Delivered", "Waybill No", "Status and Scan", "Shipment Details"]):
                         break
 
-                # Remove cookie consent banners, chat widgets, and overlays
+                # Remove cookie consent banners, chat widgets, and overlays, and zoom out to fit full page
                 try:
                     await page.evaluate("""() => {
                         const cookies = document.querySelectorAll('#cookie-law-info-bar, [id*="cookie"], [class*="cookie"], [class*="consent"]');
                         cookies.forEach(c => c.remove());
                         const chats = document.querySelectorAll('[id*="chat"], [class*="chat"], .livechat, [aria-label*="chat"]');
                         chats.forEach(c => c.remove());
+                        document.documentElement.style.zoom = '65%';
+                        window.scrollTo(0, 0);
                     }""")
                 except Exception:
                     pass
 
                 await asyncio.sleep(1.0)
+                await page.bring_to_front()
                 await page.screenshot(path=screenshot_file, full_page=False)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="BlueDart",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.bluedart.com/trackdartresult?trackFor=0&trackNo={clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception as fe:
+                    print(f"[DesktopFrame] BlueDart error: {fe}")
                 return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_bd:
                 print(f"[BlueDart] Official screenshot error: {e_bd}, falling back to TrackCourier...")
@@ -219,6 +233,17 @@ class BlueDartScraper(BaseScraper):
                 await page.goto(f"https://trackcourier.io/track-and-trace/blue-dart/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="BlueDart",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.bluedart.com/trackdartresult?trackFor=0&trackNo={clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception:
+                    pass
                 return f"/static/screenshots/{screenshot_filename}"
         except Exception as ss_err:
             print(f"Failed to capture BlueDart screenshot for {clean_awb}: {ss_err}")
@@ -229,6 +254,11 @@ class BlueDartScraper(BaseScraper):
                     await page.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()

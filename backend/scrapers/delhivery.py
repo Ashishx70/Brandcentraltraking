@@ -52,14 +52,6 @@ class DelhiveryScraper(BaseScraper):
                     await route.abort()
                     return
 
-                if res_type == "image":
-                    if "delhivery.com" in url_lower:
-                        await route.continue_()
-                        return
-                    else:
-                        await route.abort()
-                        return
-
                 ignored_domains = [
                     "google-analytics", "doubleclick", "adsense",
                     "facebook", "fundingchoices", "amazon-adsystem", "clarity"
@@ -165,7 +157,19 @@ class DelhiveryScraper(BaseScraper):
                 except Exception:
                     pass
 
+                await page.bring_to_front()
                 await page.screenshot(path=screenshot_file, full_page=False)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Delhivery",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.delhivery.com/track/package/{clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception as fe:
+                    print(f"[DesktopFrame] Delhivery error: {fe}")
                 return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_primary:
                 print(f"[Delhivery] Official screenshot error: {e_primary}, falling back to TrackCourier...")
@@ -173,6 +177,17 @@ class DelhiveryScraper(BaseScraper):
                 await page.goto(f"https://trackcourier.io/track-and-trace/delhivery/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Delhivery",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.delhivery.com/track/package/{clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception:
+                    pass
                 return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"Failed to capture Delhivery screenshot for {clean_awb}: {e}")
@@ -183,6 +198,11 @@ class DelhiveryScraper(BaseScraper):
                     await page.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
