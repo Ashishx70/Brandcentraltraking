@@ -83,7 +83,7 @@
                             </button>
                         </div>
                     </div>
-                    <a href="/static/sample_upload.xlsx" download class="sample-link" style="font-size: 0.75rem; white-space: nowrap; margin-left: 10px;">📥 Sample Excel</a>
+                    <a href="/static/sample_upload.xlsx?v=3.4.3" download="sample_upload.xlsx" class="sample-link" style="font-size: 0.75rem; white-space: nowrap; margin-left: 10px;">📥 Sample Excel</a>
                 </div>
 
                 <!-- Slim Progress Bar -->
@@ -245,6 +245,12 @@
                                         <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
                                     </div>
                                 </th>
+                                <th data-col="order_id">
+                                    <div class="header-content">
+                                        <span>Order id</span>
+                                        <button class="header-filter-btn" title="Filter"><i data-lucide="filter"></i></button>
+                                    </div>
+                                </th>
                                 <th data-col="tracking_number">
                                     <div class="header-content">
                                         <span>AWB No.</span>
@@ -298,7 +304,7 @@
                         </thead>
                         <tbody id="table-body">
                             <tr class="empty-row">
-                                <td colspan="16">
+                                <td colspan="17">
                                     <div class="empty-state">
                                         <i data-lucide="file-warning"></i>
                                         <p>No shipments tracked yet. Upload a sheet to get started.</p>
@@ -545,6 +551,6 @@
     </div>
 
     <!-- Script -->
-    <script src="/static/app.js?v=3.4.2"></script>
+    <script src="/static/app.js?v=3.4.3"></script>
 </body>
 </html>

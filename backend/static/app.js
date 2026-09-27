@@ -864,6 +864,7 @@ document.addEventListener('DOMContentLoaded', () => {
             mp_date: currentItem ? currentItem.mp_date : '',
             days_left: currentItem ? currentItem.days_left : '',
             invoice_no: currentItem ? currentItem.invoice_no : '',
+            order_id: currentItem ? currentItem.order_id : '',
             platform_status: currentItem ? currentItem.platform_status : '',
             capture_screenshot: !!state.captureScreenshot
         };
@@ -938,6 +939,7 @@ document.addEventListener('DOMContentLoaded', () => {
             mp_date: currentItem ? currentItem.mp_date : '',
             days_left: currentItem ? currentItem.days_left : '',
             invoice_no: currentItem ? currentItem.invoice_no : '',
+            order_id: currentItem ? currentItem.order_id : '',
             platform_status: currentItem ? currentItem.platform_status : '',
             capture_screenshot: true // ALWAYS capture official screenshot
         };
@@ -1046,6 +1048,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                  (item.channel || '').toLowerCase().includes(query) ||
                                  (item.seller_name || '').toLowerCase().includes(query) ||
                                  (item.invoice_no || '').toLowerCase().includes(query) ||
+                                 (item.order_id || '').toLowerCase().includes(query) ||
                                  (item.last_location || '').toLowerCase().includes(query);
             
             const matchesCourier = courier === 'all' || item.courier.toLowerCase() === courier.toLowerCase();
@@ -1058,7 +1061,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     let itemVal = item[col] || '';
                     if (col === 'screenshot') {
                         itemVal = (item.screenshot && item.screenshot !== '-') ? 'Has Image' : 'No Image';
-                    } else if (col === 'invoice_no' || col === 'platform_status' || col === 'channel' || col === 'seller_name' || col === 'return_date' || col === 'mp_date' || col === 'days_left') {
+                    } else if (col === 'invoice_no' || col === 'order_id' || col === 'platform_status' || col === 'channel' || col === 'seller_name' || col === 'return_date' || col === 'mp_date' || col === 'days_left') {
                         itemVal = itemVal || '-';
                     } else if (col === 'last_location') {
                         itemVal = itemVal || 'Pending scan';
@@ -1250,7 +1253,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (dataList.length === 0) {
             tableBody.innerHTML = `
                 <tr class="empty-row">
-                    <td colspan="16">
+                    <td colspan="17">
                         <div class="empty-state">
                             <i data-lucide="file-warning"></i>
                             <p>No matching shipments found.</p>
@@ -1308,6 +1311,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td><span style="color:${rowTextColor}">${item.mp_date || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.days_left || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.invoice_no || '-'}</span></td>
+                <td><span style="color:${rowTextColor}">${item.order_id || '-'}</span></td>
                 <td><span class="awb-badge clickable-awb" style="color:${rowTextColor}" title="Click to view journey timeline">${item.tracking_number}</span></td>
                 <td><span class="courier-badge ${getCourierBadgeClass(item.courier)}">${item.courier}</span></td>
                 <td><span style="color:${rowTextColor}">${item.platform_status || '-'}</span></td>
@@ -1505,6 +1509,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     mp_date: '-',
                     days_left: '-',
                     invoice_no: '-',
+                    order_id: '-',
                     tracking_number: data.tracking_number,
                     courier: data.courier,
                     platform_status: '-',
@@ -1758,7 +1763,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let val = item[colKey] || '';
             if (colKey === 'screenshot') {
                 return (item.screenshot && item.screenshot !== '-') ? 'Has Image' : 'No Image';
-            } else if (colKey === 'invoice_no' || colKey === 'platform_status' || colKey === 'channel' || colKey === 'seller_name' || colKey === 'return_date' || colKey === 'mp_date' || colKey === 'days_left') {
+            } else if (colKey === 'invoice_no' || colKey === 'order_id' || colKey === 'platform_status' || colKey === 'channel' || colKey === 'seller_name' || colKey === 'return_date' || colKey === 'mp_date' || colKey === 'days_left') {
                 return val || '-';
             } else if (colKey === 'last_location') {
                 return val || 'Pending scan';
