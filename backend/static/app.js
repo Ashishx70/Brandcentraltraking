@@ -861,6 +861,7 @@ document.addEventListener('DOMContentLoaded', () => {
             channel: currentItem ? currentItem.channel : '',
             seller_name: currentItem ? currentItem.seller_name : '',
             return_date: currentItem ? currentItem.return_date : '',
+            return_id: currentItem ? currentItem.return_id : '',
             mp_date: currentItem ? currentItem.mp_date : '',
             days_left: currentItem ? currentItem.days_left : '',
             invoice_no: currentItem ? currentItem.invoice_no : '',
@@ -938,6 +939,7 @@ document.addEventListener('DOMContentLoaded', () => {
             channel: currentItem ? currentItem.channel : '',
             seller_name: currentItem ? currentItem.seller_name : '',
             return_date: currentItem ? currentItem.return_date : '',
+            return_id: currentItem ? currentItem.return_id : '',
             mp_date: currentItem ? currentItem.mp_date : '',
             days_left: currentItem ? currentItem.days_left : '',
             invoice_no: currentItem ? currentItem.invoice_no : '',
@@ -1051,6 +1053,7 @@ document.addEventListener('DOMContentLoaded', () => {
                                  item.courier.toLowerCase().includes(query) ||
                                  (item.channel || '').toLowerCase().includes(query) ||
                                  (item.seller_name || '').toLowerCase().includes(query) ||
+                                 (item.return_id || '').toLowerCase().includes(query) ||
                                  (item.invoice_no || '').toLowerCase().includes(query) ||
                                  (item.order_id || '').toLowerCase().includes(query) ||
                                  (item.item_sku || '').toLowerCase().includes(query) ||
@@ -1067,7 +1070,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     let itemVal = item[col] || '';
                     if (col === 'screenshot') {
                         itemVal = (item.screenshot && item.screenshot !== '-') ? 'Has Image' : 'No Image';
-                    } else if (col === 'invoice_no' || col === 'order_id' || col === 'item_sku' || col === 'amt' || col === 'platform_status' || col === 'channel' || col === 'seller_name' || col === 'return_date' || col === 'mp_date' || col === 'days_left') {
+                    } else if (col === 'invoice_no' || col === 'order_id' || col === 'item_sku' || col === 'amt' || col === 'platform_status' || col === 'channel' || col === 'seller_name' || col === 'return_date' || col === 'return_id' || col === 'mp_date' || col === 'days_left') {
                         itemVal = itemVal || '-';
                     } else if (col === 'last_location') {
                         itemVal = itemVal || 'Pending scan';
@@ -1259,7 +1262,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (dataList.length === 0) {
             tableBody.innerHTML = `
                 <tr class="empty-row">
-                    <td colspan="19">
+                    <td colspan="20">
                         <div class="empty-state">
                             <i data-lucide="file-warning"></i>
                             <p>No matching shipments found.</p>
@@ -1314,6 +1317,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td><span style="color:${rowTextColor}">${item.channel || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.seller_name || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.return_date || '-'}</span></td>
+                <td><span style="color:${rowTextColor}">${item.return_id || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.mp_date || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.days_left || '-'}</span></td>
                 <td><span style="color:${rowTextColor}">${item.invoice_no || '-'}</span></td>
@@ -1514,6 +1518,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     channel: 'Quick Track',
                     seller_name: '-',
                     return_date: '-',
+                    return_id: '-',
                     mp_date: '-',
                     days_left: '-',
                     invoice_no: '-',
@@ -1773,7 +1778,7 @@ document.addEventListener('DOMContentLoaded', () => {
             let val = item[colKey] || '';
             if (colKey === 'screenshot') {
                 return (item.screenshot && item.screenshot !== '-') ? 'Has Image' : 'No Image';
-            } else if (colKey === 'invoice_no' || colKey === 'order_id' || colKey === 'item_sku' || colKey === 'amt' || colKey === 'platform_status' || colKey === 'channel' || colKey === 'seller_name' || colKey === 'return_date' || colKey === 'mp_date' || colKey === 'days_left') {
+            } else if (colKey === 'invoice_no' || colKey === 'order_id' || colKey === 'item_sku' || colKey === 'amt' || colKey === 'platform_status' || colKey === 'channel' || colKey === 'seller_name' || colKey === 'return_date' || colKey === 'return_id' || colKey === 'mp_date' || colKey === 'days_left') {
                 return val || '-';
             } else if (colKey === 'last_location') {
                 return val || 'Pending scan';

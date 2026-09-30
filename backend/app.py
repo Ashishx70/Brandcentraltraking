@@ -196,6 +196,7 @@ def init_db():
         channel TEXT,
         seller_name TEXT,
         return_date TEXT,
+        return_id TEXT,
         mp_date TEXT,
         days_left TEXT,
         invoice_no TEXT,
@@ -214,7 +215,7 @@ def init_db():
     );
     """)
     # Migration step to add new columns if table already exists
-    for col in ["last_sync", "invoice_no", "order_id", "item_sku", "amt", "screenshot", "platform_status", "channel", "seller_name", "return_date", "mp_date", "days_left", "raw_data"]:
+    for col in ["last_sync", "invoice_no", "order_id", "item_sku", "amt", "screenshot", "platform_status", "channel", "seller_name", "return_date", "return_id", "mp_date", "days_left", "raw_data"]:
         try:
             cursor.execute(f"ALTER TABLE shipments ADD COLUMN {col} TEXT;")
         except sqlite3.OperationalError:
@@ -262,6 +263,7 @@ class SyncSingleRequest(BaseModel):
     channel: Optional[str] = ""
     seller_name: Optional[str] = ""
     return_date: Optional[str] = ""
+    return_id: Optional[str] = ""
     mp_date: Optional[str] = ""
     days_left: Optional[str] = ""
     invoice_no: Optional[str] = ""
@@ -371,6 +373,7 @@ async def upload_file(file: UploadFile = File(...)):
     channel_aliases = ['channel', 'channels', 'sales channel', 'platform']
     seller_name_aliases = ['seller name', 'seller_name', 'seller', 'vendor', 'sellername']
     return_date_aliases = ['return date', 'return_date', 'ret date', 'ret_date', 'retum date', 'retum_date', 'retum', 'return_dt', 'ret_dt']
+    return_id_aliases = ['return id', 'return_id', 'returnid', 'ret id', 'ret_id', 'return order id', 'return_order_id', 'ret_order_id', 'return #', 'ret #']
     mp_date_aliases = ['mp date', 'mp_date', 'marketplace date', 'mp date.', 'marketplace_date']
     days_left_aliases = ['days left', 'days_left', 'days', 'daysleft', 'day left', 'day_left']
     invoice_aliases = ['invoice no', 'invoice_no', 'invoice no.', 'invoice', 'invoice number', 'inv no', 'inv_no', 'invoice#', 'inv']
@@ -389,6 +392,7 @@ async def upload_file(file: UploadFile = File(...)):
                 channel = find_col_value(row, channel_aliases)
                 seller_name = find_col_value(row, seller_name_aliases)
                 return_date = clean_date_str(find_col_value(row, return_date_aliases))
+                return_id = find_col_value(row, return_id_aliases)
                 mp_date = clean_date_str(find_col_value(row, mp_date_aliases))
                 days_left = find_col_value(row, days_left_aliases)
                 invoice = find_col_value(row, invoice_aliases)
@@ -407,6 +411,7 @@ async def upload_file(file: UploadFile = File(...)):
                             "channel": channel,
                             "seller_name": seller_name,
                             "return_date": return_date,
+                            "return_id": return_id,
                             "mp_date": mp_date,
                             "days_left": days_left,
                             "invoice_no": invoice,
@@ -430,6 +435,7 @@ async def upload_file(file: UploadFile = File(...)):
                 channel = find_col_value(row_dict, channel_aliases)
                 seller_name = find_col_value(row_dict, seller_name_aliases)
                 return_date = clean_date_str(find_col_value(row_dict, return_date_aliases))
+                return_id = find_col_value(row_dict, return_id_aliases)
                 mp_date = clean_date_str(find_col_value(row_dict, mp_date_aliases))
                 days_left = find_col_value(row_dict, days_left_aliases)
                 invoice = find_col_value(row_dict, invoice_aliases)
@@ -447,6 +453,7 @@ async def upload_file(file: UploadFile = File(...)):
                         "channel": channel,
                         "seller_name": seller_name,
                         "return_date": return_date,
+                        "return_id": return_id,
                         "mp_date": mp_date,
                         "days_left": days_left,
                         "invoice_no": invoice,
@@ -478,13 +485,14 @@ async def upload_file(file: UploadFile = File(...)):
     
     for s in shipments:
         cursor.execute("""
-        INSERT INTO shipments (task_id, channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task_id,
             s.get("channel", ""),
             s.get("seller_name", ""),
             s.get("return_date", ""),
+            s.get("return_id", ""),
             s.get("mp_date", ""),
             s.get("days_left", ""),
             s.get("invoice_no", ""),
@@ -532,7 +540,7 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
     # Retrieve shipments from database
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT tracking_number, courier, status, last_location, timestamp, last_sync, screenshot, channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, platform_status FROM shipments WHERE task_id = ?", (task_id,))
+    cursor.execute("SELECT tracking_number, courier, status, last_location, timestamp, last_sync, screenshot, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, platform_status FROM shipments WHERE task_id = ?", (task_id,))
     rows = cursor.fetchall()
     conn.close()
     
@@ -549,13 +557,14 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
             "channel": r[7] or "",
             "seller_name": r[8] or "",
             "return_date": r[9] or "",
-            "mp_date": r[10] or "",
-            "days_left": r[11] or "",
-            "invoice_no": r[12] or "",
-            "order_id": r[13] or "",
-            "item_sku": r[14] or "",
-            "amt": r[15] or "",
-            "platform_status": r[16] or ""
+            "return_id": r[10] or "",
+            "mp_date": r[11] or "",
+            "days_left": r[12] or "",
+            "invoice_no": r[13] or "",
+            "order_id": r[14] or "",
+            "item_sku": r[15] or "",
+            "amt": r[16] or "",
+            "platform_status": r[17] or ""
         })
 
     if selected_tracking_numbers:
@@ -704,13 +713,14 @@ async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTa
             cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "pending", 0, "Ready to start"))
             for s in body.shipments:
                 cursor.execute("""
-                INSERT INTO shipments (task_id, channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     task_id,
                     s.get("channel", ""),
                     s.get("seller_name", ""),
                     s.get("return_date", ""),
+                    s.get("return_id", ""),
                     s.get("mp_date", ""),
                     s.get("days_left", ""),
                     s.get("invoice_no", ""),
@@ -787,13 +797,14 @@ async def sync_single_shipment(body: SyncSingleRequest):
             
         if not existing_shipment:
             cursor.execute("""
-            INSERT INTO shipments (task_id, channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 task_id,
                 body.channel or "",
                 body.seller_name or "",
                 body.return_date or "",
+                body.return_id or "",
                 body.mp_date or "",
                 body.days_left or "",
                 body.invoice_no or "",
@@ -883,34 +894,35 @@ async def get_progress(task_id: str):
     status, progress, current_action = task_row
     
     # Get shipments
-    cursor.execute("SELECT channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data FROM shipments WHERE task_id = ?", (task_id,))
+    cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data FROM shipments WHERE task_id = ?", (task_id,))
     shipment_rows = cursor.fetchall()
     shipments = []
     for r in shipment_rows:
         raw_events = []
-        if len(r) > 17 and r[17]:
+        if len(r) > 18 and r[18]:
             try:
-                raw_events = json.loads(r[17])
+                raw_events = json.loads(r[18])
             except Exception:
                 raw_events = []
         shipments.append({
             "channel": r[0] or "",
             "seller_name": r[1] or "",
             "return_date": r[2] or "",
-            "mp_date": r[3] or "",
-            "days_left": r[4] or "",
-            "invoice_no": r[5] or "",
-            "order_id": r[6] or "",
-            "item_sku": r[7] or "",
-            "amt": r[8] or "",
-            "tracking_number": r[9],
-            "courier": r[10],
-            "platform_status": r[11] or "",
-            "status": r[12],
-            "last_location": r[13],
-            "timestamp": r[14],
-            "last_sync": r[15] or "-",
-            "screenshot": r[16] or "-",
+            "return_id": r[3] or "",
+            "mp_date": r[4] or "",
+            "days_left": r[5] or "",
+            "invoice_no": r[6] or "",
+            "order_id": r[7] or "",
+            "item_sku": r[8] or "",
+            "amt": r[9] or "",
+            "tracking_number": r[10],
+            "courier": r[11],
+            "platform_status": r[12] or "",
+            "status": r[13],
+            "last_location": r[14],
+            "timestamp": r[15],
+            "last_sync": r[16] or "-",
+            "screenshot": r[17] or "-",
             "events": raw_events
         })
         
@@ -973,10 +985,10 @@ def generate_excel_stream(shipment_rows, task_id: str, request: Request):
 
     # Define headers matching the Excel layout followed by tracking status and trailing blank columns
     headers = [
-        "Channel", "Seller Name", "Return Date", "MP Date", "Days Left",
+        "Channel", "Seller Name", "Return Date", "Return Id", "MP Date", "Days Left",
         "Invoice No.", "Order id", "Item SKU", "Amt", "AWB No.", "Courier Partner", "Platform Status",
         "Status", "Last Location", "Timestamp", "Last Sync", "Image",
-        "Ticket no", "Dispute Reason", "Remark"
+        "Ticket no", "Dispute Reason", "Ticket Status", "Remark"
     ]
     ws.append(headers)
     ws.row_dimensions[1].height = 26
@@ -1011,40 +1023,41 @@ def generate_excel_stream(shipment_rows, task_id: str, request: Request):
         row_color = AWB_COLORS_HEX[idx % len(AWB_COLORS_HEX)]
         row_font = Font(name="Segoe UI", size=11, color=row_color)
         
-        # Write values (columns 1 to 16)
+        # Write values (columns 1 to 17)
         values = [
             r[0] or "",   # 1: Channel
             r[1] or "",   # 2: Seller Name
             r[2] or "",   # 3: Return Date
-            r[3] or "",   # 4: MP Date
-            r[4] or "",   # 5: Days Left
-            r[5] or "",   # 6: Invoice No.
-            r[6] or "",   # 7: Order id
-            r[7] or "",   # 8: Item SKU
-            r[8] or "",   # 9: Amt
-            r[9] or "",   # 10: AWB No.
-            r[10] or "",  # 11: Courier Partner
-            r[11] or "",  # 12: Platform Status
-            r[12] or "",  # 13: Status
-            r[13] or "",  # 14: Last Location
-            r[14] or "",  # 15: Timestamp
-            r[15] or "-"  # 16: Last Sync
+            r[3] or "",   # 4: Return Id
+            r[4] or "",   # 5: MP Date
+            r[5] or "",   # 6: Days Left
+            r[6] or "",   # 7: Invoice No.
+            r[7] or "",   # 8: Order id
+            r[8] or "",   # 9: Item SKU
+            r[9] or "",   # 10: Amt
+            r[10] or "",  # 11: AWB No.
+            r[11] or "",  # 12: Courier Partner
+            r[12] or "",  # 13: Platform Status
+            r[13] or "",  # 14: Status
+            r[14] or "",  # 15: Last Location
+            r[15] or "",  # 16: Timestamp
+            r[16] or "-"  # 17: Last Sync
         ]
         
         for col_idx, val in enumerate(values, start=1):
             cell = ws.cell(row=row_num, column=col_idx, value=val)
             cell.font = row_font
             # Alignments: Left align for text/location/seller, Center for status/numbers/dates
-            if col_idx in [1, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 16]:
+            if col_idx in [1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 16, 17]:
                 cell.alignment = Alignment(horizontal="center", vertical="center")
             else:
                 cell.alignment = Alignment(horizontal="left", vertical="center")
                 
-        # Write Image icon / hyperlink column (col_idx = 17 / Column Q)
-        screenshot_path = r[16] if len(r) > 16 else "-"
-        awb_for_link = r[9] or ""      # tracking_number
-        courier_for_link = r[10] or "" # courier
-        cell = ws.cell(row=row_num, column=17)
+        # Write Image icon / hyperlink column (col_idx = 18 / Column R)
+        screenshot_path = r[17] if len(r) > 17 else "-"
+        awb_for_link = r[10] or ""     # tracking_number
+        courier_for_link = r[11] or "" # courier
+        cell = ws.cell(row=row_num, column=18)
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
         if screenshot_path and screenshot_path != "-":
@@ -1066,8 +1079,8 @@ def generate_excel_stream(shipment_rows, task_id: str, request: Request):
             cell.hyperlink = direct_url
             cell.font = Font(name="Segoe UI", size=14, color="CC4400", underline="single")
 
-        # Trailing blank columns (18: Ticket no, 19: Dispute Reason, 20: Remark) — keep cells empty
-        for blank_col_idx in (18, 19, 20):
+        # Trailing blank columns (19: Ticket no, 20: Dispute Reason, 21: Ticket Status, 22: Remark) — keep cells empty
+        for blank_col_idx in (19, 20, 21, 22):
             blank_cell = ws.cell(row=row_num, column=blank_col_idx, value="")
             blank_cell.font = row_font
             blank_cell.alignment = Alignment(horizontal="left", vertical="center")
@@ -1075,8 +1088,8 @@ def generate_excel_stream(shipment_rows, task_id: str, request: Request):
     # Auto-adjust column widths
     for col in ws.columns:
         col_letter = get_column_letter(col[0].column)
-        if col_letter == 'Q':
-            ws.column_dimensions['Q'].width = 14
+        if col_letter == 'R':
+            ws.column_dimensions['R'].width = 14
             continue
         max_len = 0
         for cell in col:
@@ -1101,7 +1114,7 @@ def generate_excel_stream(shipment_rows, task_id: str, request: Request):
 async def export_results(task_id: str, request: Request):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
+    cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
     shipment_rows = cursor.fetchall()
     conn.close()
     
@@ -1120,6 +1133,7 @@ async def export_direct(body: ExportDirectRequest, request: Request):
             s.get("channel", ""),
             s.get("seller_name", ""),
             s.get("return_date", ""),
+            s.get("return_id", ""),
             s.get("mp_date", ""),
             s.get("days_left", ""),
             s.get("invoice_no", ""),
@@ -1227,13 +1241,14 @@ async def restore_task(body: RestoreTaskRequest):
     cursor.execute("DELETE FROM shipments WHERE task_id = ?", (body.task_id,))
     for s in body.shipments:
         cursor.execute("""
-        INSERT INTO shipments (task_id, channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             body.task_id,
             s.get("channel", ""),
             s.get("seller_name", ""),
             s.get("return_date", ""),
+            s.get("return_id", ""),
             s.get("mp_date", ""),
             s.get("days_left", ""),
             s.get("invoice_no", ""),
@@ -1272,7 +1287,7 @@ async def get_latest_task():
     task_id = task_row[0]
 
     # Get shipments
-    cursor.execute("SELECT channel, seller_name, return_date, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
+    cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
     shipment_rows = cursor.fetchall()
     shipments = []
     for r in shipment_rows:
@@ -1280,20 +1295,21 @@ async def get_latest_task():
             "channel": r[0] or "",
             "seller_name": r[1] or "",
             "return_date": r[2] or "",
-            "mp_date": r[3] or "",
-            "days_left": r[4] or "",
-            "invoice_no": r[5] or "",
-            "order_id": r[6] or "",
-            "item_sku": r[7] or "",
-            "amt": r[8] or "",
-            "tracking_number": r[9],
-            "courier": r[10],
-            "platform_status": r[11] or "",
-            "status": r[12],
-            "last_location": r[13],
-            "timestamp": r[14],
-            "last_sync": r[15] or "-",
-            "screenshot": r[16] or "-"
+            "return_id": r[3] or "",
+            "mp_date": r[4] or "",
+            "days_left": r[5] or "",
+            "invoice_no": r[6] or "",
+            "order_id": r[7] or "",
+            "item_sku": r[8] or "",
+            "amt": r[9] or "",
+            "tracking_number": r[10],
+            "courier": r[11],
+            "platform_status": r[12] or "",
+            "status": r[13],
+            "last_location": r[14],
+            "timestamp": r[15],
+            "last_sync": r[16] or "-",
+            "screenshot": r[17] or "-"
         })
 
     # Get today's API calls count
