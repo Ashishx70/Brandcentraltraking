@@ -771,7 +771,7 @@ class XpressBeesScraper(BaseScraper):
                     "Origin": "https://www.xpressbees.com",
                     "Referer": f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
                 }
-                r_ch = _req.get("https://altcha-api.xbees.in/v1/challenge", headers=_headers, timeout=8)
+                r_ch = _req.get("https://altcha-api.xbees.in/v1/challenge", headers=_headers, timeout=12)
                 if r_ch.status_code == 200:
                     ch_data = r_ch.json()
                     num = solve_altcha(ch_data["challenge"], ch_data["salt"], ch_data.get("maxnumber", 100000))
@@ -811,7 +811,7 @@ class XpressBeesScraper(BaseScraper):
                 await route.continue_()
 
             await page.route("**/*", intercept)
-            await page.goto(official_url, wait_until="domcontentloaded", timeout=25000)
+            await page.goto(official_url, wait_until="domcontentloaded", timeout=45000)
             await asyncio.sleep(1.5)
 
             # Remove popups
@@ -877,12 +877,12 @@ class XpressBeesScraper(BaseScraper):
                     }""")
 
                 # ─────────────────────────────────────────────────────────────
-                # STEP 4: Wait up to 40s for tracking content to appear
+                # STEP 4: Wait up to 90s for tracking content to appear
                 # Also retry submit at intervals if not loaded
                 # ─────────────────────────────────────────────────────────────
                 results_ready = False
-                for attempt in range(50):
-                    await asyncio.sleep(0.8)
+                for attempt in range(90):
+                    await asyncio.sleep(1.0)
                     content = await page.content()
                     if any(k in content for k in [
                         "Your Domestic Shipments", "Shipping Details", "Shipment History",
@@ -891,8 +891,8 @@ class XpressBeesScraper(BaseScraper):
                     ]):
                         results_ready = True
                         break
-                    # Retry submit at second 8 and 16 in case first click didn't register
-                    if attempt in [10, 20] and solved_token:
+                    # Retry submit at 15s, 30s, 50s in case first click didn't register
+                    if attempt in [15, 30, 50] and solved_token:
                         print(f"[Xpressbees] Retry submit at attempt {attempt}...")
                         await page.evaluate("""() => {
                             const f = document.querySelector('form');
