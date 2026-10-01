@@ -762,87 +762,118 @@ class XpressBeesScraper(BaseScraper):
             import sys as _sys
 
             # ==============================================================
-            # HEADLESS PATH (Render / Linux): Solve Altcha in Python, inject
-            # token into browser, get OFFICIAL XpressBees site screenshot.
-            # Altcha JS Web Worker fails in headless — but our Python solver
-            # works perfectly anywhere. We solve → inject → submit → screenshot.
+            # HEADLESS PATH (Render / Linux): Intercept browser's Altcha
+            # challenge response → solve in Python → inject matched token.
+            # Key: We MUST use the SAME challenge the browser fetched,
+            # not a separate one, or the server will reject it.
             # ==============================================================
             is_headless_env = (_sys.platform != "win32")
             if is_headless_env:
-                print(f"[Xpressbees] Headless env — solving Altcha in Python then injecting into official site for {clean_awb}")
-                solved_token = None
+                print(f"[Xpressbees] Headless env — intercepting Altcha challenge from browser for {clean_awb}")
+                captured_challenge = {}  # will be filled by response listener
+
                 try:
-                    import requests as _req
-                    r_ch = _req.get("https://altcha-api.xbees.in/v1/challenge", timeout=6)
-                    if r_ch.status_code == 200:
-                        ch_data = r_ch.json()
-                        num = solve_altcha(ch_data["challenge"], ch_data["salt"], ch_data.get("maxnumber", 100000))
+                    official_url = f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
+                    page = await playwright_manager.new_page(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                    )
+                    await page.add_init_script("delete navigator.__proto__.webdriver;")
+                    await page.set_viewport_size({"width": 1440, "height": 900})
+
+                    async def intercept_and_capture(route):
+                        req = route.request
+                        url_lower = req.url.lower()
+                        if req.resource_type in ["media"]:
+                            await route.abort()
+                            return
+                        ignored = ["google-analytics", "doubleclick", "adsense", "facebook", "criteo", "pubmatic"]
+                        if any(kw in url_lower for kw in ignored):
+                            await route.abort()
+                            return
+                        await route.continue_()
+
+                    # Intercept the browser's own Altcha challenge response
+                    async def on_response(response):
+                        if "altcha-api.xbees.in" in response.url and "challenge" in response.url:
+                            try:
+                                ch_data = await response.json()
+                                captured_challenge.update(ch_data)
+                                print(f"[Xpressbees] Captured browser Altcha challenge: salt={ch_data.get('salt','')[:20]}...")
+                            except Exception as ce:
+                                print(f"[Xpressbees] Challenge capture error: {ce}")
+
+                    page.on("response", on_response)
+                    await page.route("**/*", intercept_and_capture)
+                    await page.goto(official_url, wait_until="domcontentloaded", timeout=20000)
+
+                    # Wait for the challenge to be fetched by the page (up to 5s)
+                    for _ in range(10):
+                        await asyncio.sleep(0.5)
+                        if captured_challenge.get("challenge"):
+                            break
+
+                    solved_token = None
+                    if captured_challenge.get("challenge"):
+                        ch = captured_challenge
+                        num = solve_altcha(ch["challenge"], ch["salt"], ch.get("maxnumber", 100000))
                         if num is not None:
                             payload_obj = {
-                                "algorithm": ch_data.get("algorithm", "SHA-256"),
-                                "challenge": ch_data["challenge"],
+                                "algorithm": ch.get("algorithm", "SHA-256"),
+                                "challenge": ch["challenge"],
                                 "number": num,
-                                "salt": ch_data["salt"],
-                                "signature": ch_data["signature"]
+                                "salt": ch["salt"],
+                                "signature": ch["signature"]
                             }
                             solved_token = base64.b64encode(json.dumps(payload_obj).encode('utf-8')).decode('utf-8')
-                            print(f"[Xpressbees] Altcha Python solved in headless, token len={len(solved_token)}")
-                except Exception as altcha_err:
-                    print(f"[Xpressbees] Headless Altcha solve error: {altcha_err}")
+                            print(f"[Xpressbees] Browser challenge solved! token len={len(solved_token)}")
+                    else:
+                        print(f"[Xpressbees] Could not capture browser challenge, trying direct fetch")
+                        # Fallback: fetch fresh challenge directly (might work if server is lenient)
+                        try:
+                            import requests as _req
+                            r_ch = _req.get("https://altcha-api.xbees.in/v1/challenge", timeout=6)
+                            if r_ch.status_code == 200:
+                                ch_data = r_ch.json()
+                                num = solve_altcha(ch_data["challenge"], ch_data["salt"], ch_data.get("maxnumber", 100000))
+                                if num is not None:
+                                    payload_obj = {
+                                        "algorithm": ch_data.get("algorithm", "SHA-256"),
+                                        "challenge": ch_data["challenge"],
+                                        "number": num,
+                                        "salt": ch_data["salt"],
+                                        "signature": ch_data["signature"]
+                                    }
+                                    solved_token = base64.b64encode(json.dumps(payload_obj).encode('utf-8')).decode('utf-8')
+                        except Exception:
+                            pass
 
-                if solved_token:
-                    try:
-                        official_url = f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
-                        page = await playwright_manager.new_page(
-                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-                        )
-                        await page.add_init_script("delete navigator.__proto__.webdriver;")
-                        await page.set_viewport_size({"width": 1440, "height": 900})
-
-                        async def intercept_official(route):
-                            req = route.request
-                            url_lower = req.url.lower()
-                            if req.resource_type in ["media"]:
-                                await route.abort()
-                                return
-                            ignored = ["google-analytics", "doubleclick", "adsense", "facebook", "criteo", "pubmatic"]
-                            if any(kw in url_lower for kw in ignored):
-                                await route.abort()
-                                return
-                            await route.continue_()
-
-                        await page.route("**/*", intercept_official)
-                        await page.goto(official_url, wait_until="domcontentloaded", timeout=20000)
-                        await asyncio.sleep(1.5)
-
+                    if solved_token:
                         # Remove popups/modals
+                        await asyncio.sleep(0.5)
                         await page.evaluate("""() => {
                             document.querySelectorAll('div[class*="modal"], div[class*="popup"], div[role="dialog"]').forEach(e => e.remove());
                         }""")
 
-                        # Inject Python-solved Altcha token directly into the hidden input
-                        injected = await page.evaluate(f"""(token) => {{
-                            // Try altcha-widget shadow root first
+                        # Inject the MATCHED Python-solved token into the form
+                        injected = await page.evaluate("""(token) => {
                             const widget = document.querySelector('altcha-widget');
-                            if (widget && widget.shadowRoot) {{
+                            if (widget && widget.shadowRoot) {
                                 const inp = widget.shadowRoot.querySelector('input[name="altcha"]');
-                                if (inp) {{ inp.value = token; return 'shadow-injected'; }}
-                            }}
-                            // Try regular DOM
+                                if (inp) { inp.value = token; return 'shadow-injected'; }
+                            }
                             const inp2 = document.querySelector('input[name="altcha"]');
-                            if (inp2) {{ inp2.value = token; return 'dom-injected'; }}
-                            // Create hidden input if not found
+                            if (inp2) { inp2.value = token; return 'dom-injected'; }
                             const f = document.querySelector('form');
-                            if (f) {{
+                            if (f) {
                                 let h = document.createElement('input');
                                 h.type = 'hidden'; h.name = 'altcha'; h.value = token;
                                 f.appendChild(h); return 'created-injected';
-                            }}
+                            }
                             return 'not-found';
-                        }}""", solved_token)
-                        print(f"[Xpressbees] Altcha inject result: {injected}")
+                        }""", solved_token)
+                        print(f"[Xpressbees] Inject result: {injected}")
 
-                        # Click the Search/Submit button
+                        # Click Search/Submit button
                         btn = page.locator('button.sc-fTyFcS.gRKEpD, button:has(img[alt="Submit Button"]), button[type="submit"]').first
                         if await btn.count() > 0:
                             await btn.click()
@@ -853,9 +884,9 @@ class XpressBeesScraper(BaseScraper):
                                 else if (f) f.submit();
                             }""")
 
-                        # Wait for official tracking content to appear (up to 20s)
+                        # Wait for official tracking content (up to 25s)
                         results_ready = False
-                        for _ in range(25):
+                        for _ in range(30):
                             await asyncio.sleep(0.8)
                             content = await page.content()
                             if any(k in content for k in [
@@ -867,8 +898,7 @@ class XpressBeesScraper(BaseScraper):
                                 break
 
                         if results_ready:
-                            print(f"[Xpressbees] Official site loaded on headless! Taking screenshot...")
-                            # Click 'View' to expand full details
+                            print(f"[Xpressbees] Official site loaded on headless Render! Taking screenshot...")
                             try:
                                 await page.evaluate("""() => {
                                     const all = Array.from(document.querySelectorAll('*'));
@@ -879,7 +909,6 @@ class XpressBeesScraper(BaseScraper):
                             except Exception:
                                 pass
 
-                            # Clean overlays, zoom to 65%
                             await page.evaluate("""() => {
                                 document.querySelectorAll('div[class*="modal"], div[class*="popup"], div[role="dialog"]').forEach(e => e.remove());
                                 document.documentElement.style.zoom = '65%';
@@ -909,18 +938,21 @@ class XpressBeesScraper(BaseScraper):
                             except Exception:
                                 return f"/static/screenshots/{screenshot_filename}"
                         else:
-                            print(f"[Xpressbees] Official site did not load after token injection, closing page")
-                            if page:
-                                await page.close()
-                                page = None
-                    except Exception as headless_err:
-                        print(f"[Xpressbees] Headless official site error: {headless_err}")
-                        if page:
-                            try:
-                                await page.close()
-                            except Exception:
-                                pass
-                            page = None
+                            print(f"[Xpressbees] Official site did not load after injection on headless")
+                    else:
+                        print(f"[Xpressbees] No token solved, skipping injection")
+
+                    if page:
+                        await page.close()
+                        page = None
+                except Exception as headless_err:
+                    print(f"[Xpressbees] Headless path error: {headless_err}")
+                    if page:
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
+                        page = None
 
             # ==============================================================
             # WINDOWS PATH (Local): Use official XpressBees site + Altcha
