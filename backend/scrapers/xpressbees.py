@@ -506,100 +506,81 @@ class XpressBeesScraper(BaseScraper):
             try:
                 # 1. Primary: Official XpressBees website with full View details
                 official_url = f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
-                await page.goto(official_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(1.0)
+                await page.goto(official_url, wait_until="networkidle", timeout=15000)
+                await asyncio.sleep(0.8)
 
                 # Check if results already loaded
                 content_initial = await page.content()
                 already_loaded = any(k in content_initial for k in ["Shipping Details", "Shipment History", "Your Domestic Shipments"])
 
                 if not already_loaded:
-                    # Auto-verify Altcha and click submit
-                    try:
-                        cb = page.locator("altcha-widget input[type='checkbox'], .altcha-checkbox input, input[type='checkbox'], #altcha_checkbox").first
-                        if await cb.count() > 0:
-                            await cb.click()
-                            # Wait for Altcha PoW verification to actually complete (not just checkbox checked)
-                            for attempt_v in range(16):
-                                await asyncio.sleep(0.4)
-                                is_verified = await page.evaluate("""() => {
-                                    const w = document.querySelector('altcha-widget, .altcha');
-                                    if (w && (w.getAttribute('state') === 'verified' || w.getAttribute('data-state') === 'verified' || w.classList.contains('verified'))) return true;
-                                    const hiddenInp = document.querySelector('input[name="altcha"]');
-                                    if (hiddenInp && hiddenInp.value && hiddenInp.value.length > 10) return true;
-                                    return false;
-                                }""")
-                                if is_verified or attempt_v >= 7:
-                                    break
-                            await asyncio.sleep(0.5)
+                    # Remove any blocking modal/popup
+                    await page.evaluate("""() => {
+                        const closeBtn = document.querySelector('div[class*="modal"] button, div[class*="popup"] button, .sc-bdnxRM');
+                        if (closeBtn) closeBtn.click();
+                        document.querySelectorAll('div[class*="modal"], div[class*="popup"], div[role="dialog"]').forEach(e => e.remove());
+                    }""")
 
-                        # Trigger form submit via submit button
-                        try:
-                            btn = page.locator("form button[type='submit'], button.sc-fTyFcS").first
-                            if await btn.count() > 0:
-                                await btn.click()
-                        except Exception:
-                            pass
+                    # Trigger Altcha PoW verification
+                    await page.evaluate("""() => {
+                        const cb = document.querySelector('altcha-widget input[type="checkbox"], input[type="checkbox"]');
+                        if (cb) {
+                            cb.checked = true;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                            cb.dispatchEvent(new Event('input', { bubbles: true }));
+                            cb.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        }
+                    }""")
 
+                    # Wait up to 3s for Altcha token to generate
+                    for _ in range(10):
+                        await asyncio.sleep(0.3)
+                        val = await page.evaluate("""() => document.querySelector('input[name="altcha"]')?.value || "" """)
+                        if val and len(val) > 20:
+                            break
+
+                    # Click exact Search button next to AWB input
+                    btn = page.locator('button.sc-fTyFcS.gRKEpD, button:has(img[alt="Submit Button"])').first
+                    if await btn.count() > 0:
+                        await btn.click()
+                    else:
                         await page.evaluate("""() => {
-                            const btns = Array.from(document.querySelectorAll('button'));
-                            const arrow = btns.find(b => 
-                                (b.querySelector('img') && b.querySelector('img').src.includes('RightArrow')) || 
-                                (b.querySelector('span') && b.querySelector('span').innerText === 'Search') || 
-                                b.className.includes('gRKEpD') ||
-                                (b.type === 'submit' && b.querySelector('img'))
-                            );
-                            if (arrow) arrow.click();
+                            const f = document.querySelector('form');
+                            if (f && f.requestSubmit) f.requestSubmit();
                         }""")
-                    except Exception as altcha_err:
-                        print(f"[Xpressbees] Altcha interaction note: {altcha_err}")
 
-                # Wait up to 12 seconds for results table to populate
+                # Wait up to 10 seconds for tracking details to render
                 results_ready = False
-                for s in range(12):
-                    await asyncio.sleep(0.8)
+                for s in range(15):
+                    await asyncio.sleep(0.6)
                     content = await page.content()
                     if any(k in content for k in [
                         "Your Domestic Shipments", "Shipping Details", "Shipment History",
-                        "Return Delivered", "Data Received",
+                        "Return Delivered", "Data Received", "DLVD", "Delivered",
                         "RPCancel", "Rpcancel", "OutForPickUp", "No Records", "No Data Found", "Invalid"
                     ]):
                         results_ready = True
                         break
 
-                    # Retry pressing Enter / submit if results haven't appeared by second 4 or 8
-                    if s in [4, 8] and not results_ready:
-                        try:
-                            await page.locator("input[type='text']").first.press("Enter")
-                            await page.evaluate("""() => {
-                                const f = document.querySelector('form');
-                                if (f && f.requestSubmit) f.requestSubmit();
-                            }""")
-                        except Exception:
-                            pass
+                if not results_ready:
+                    raise Exception("Official Xpressbees page did not populate tracking data, falling back to TrackCourier")
 
-                # Click 'View' once to expand full Shipping Details and Shipment History
+                # Click 'View' to expand full Shipping Details and Shipment History
                 try:
                     await asyncio.sleep(0.6)
                     await page.evaluate("""() => {
                         const all = Array.from(document.querySelectorAll('*'));
                         const viewEl = all.find(e => e.children.length === 0 && e.textContent.trim() === 'View');
-                        if (viewEl) {
-                            viewEl.click();
-                        }
+                        if (viewEl) viewEl.click();
                     }""")
-                    for _ in range(16):
-                        await asyncio.sleep(0.5)
-                        content = await page.content()
-                        if "Shipping Details" in content or "Shipment History" in content:
-                            break
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.8)
                 except Exception as view_err:
                     print(f"[Xpressbees] View click note: {view_err}")
 
-                # Zoom out XpressBees page with crisp text rendering and compact vertical spacing so all details fit
+                # Clean overlays and zoom to 65% for crystal-clear presentation
                 try:
                     await page.evaluate("""() => {
+                        document.querySelectorAll('div[class*="modal"], div[class*="popup"], div[role="dialog"]').forEach(e => e.remove());
                         const style = document.createElement('style');
                         style.innerHTML = `
                             * {
@@ -608,23 +589,10 @@ class XpressBeesScraper(BaseScraper):
                             }
                         `;
                         document.head.appendChild(style);
-
-                        const allEls = Array.from(document.querySelectorAll('p, span, div, section'));
-                        allEls.forEach(el => {
-                            if (el.children.length === 0 && el.textContent && el.textContent.includes('complete the CAPTCHA')) {
-                                el.style.display = 'none';
-                            }
-                            const cs = window.getComputedStyle(el);
-                            if (parseFloat(cs.marginTop) > 14) el.style.marginTop = '6px';
-                            if (parseFloat(cs.marginBottom) > 14) el.style.marginBottom = '6px';
-                            if (parseFloat(cs.paddingTop) > 14) el.style.paddingTop = '6px';
-                            if (parseFloat(cs.paddingBottom) > 14) el.style.paddingBottom = '6px';
-                        });
-
-                        document.documentElement.style.zoom = '62%';
-                        window.scrollTo(0, 175);
+                        document.documentElement.style.zoom = '65%';
+                        window.scrollTo(0, 155);
                     }""")
-                    await asyncio.sleep(0.6)
+                    await asyncio.sleep(0.5)
                 except Exception:
                     pass
 
