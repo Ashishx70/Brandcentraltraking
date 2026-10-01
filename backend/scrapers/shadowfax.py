@@ -154,27 +154,26 @@ class ShadowfaxScraper(BaseScraper):
             await page.route("**/*", filter_route)
             try:
                 # 1. Primary: Official Shadowfax tracking portal
-                await page.goto("https://tracker.shadowfax.in/", wait_until="domcontentloaded", timeout=15000)
-                inp = await page.wait_for_selector("input", timeout=8000)
+                await page.goto("https://tracker.shadowfax.in/", wait_until="domcontentloaded", timeout=30000)
+                inp = await page.wait_for_selector("input", timeout=12000)
                 await inp.fill(clean_awb)
-                btn = await page.wait_for_selector("button:has-text('Track Your Order')", timeout=6000)
+                btn = await page.wait_for_selector("button:has-text('Track Your Order')", timeout=10000)
                 await btn.click()
 
-                # Wait for actual tracking status or not-found status to appear
-                for _ in range(14):
-                    await asyncio.sleep(0.7)
+                # Wait for actual tracking status to appear (clean_awb must be inside card text, not just skeleton)
+                for _ in range(35):
+                    await asyncio.sleep(1.0)
                     content = await page.content()
                     has_awb = clean_awb in content
                     has_real_status = any(k.lower() in content.lower() for k in [
                         'pick up canceled', 'pickup cancelled', 'delivered', 'in transit',
                         'out for delivery', 'the shipment is', 'dispatched', 'picked',
-                        'cancelled', 'return to origin', 'return', 'delivery failed',
-                        'no record', 'not found', 'invalid', 'awaiting'
+                        'cancelled', 'return to origin', 'return', 'delivery failed'
                     ])
                     if has_awb and has_real_status:
                         break
 
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(1.5)
                 await page.bring_to_front()
                 await page.screenshot(path=screenshot_file, full_page=False)
                 try:
@@ -188,21 +187,11 @@ class ShadowfaxScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] Shadowfax error: {fe}")
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="Shadowfax",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_sf:
                 print(f"[Shadowfax] Official tracker screenshot error: {e_sf}, falling back to TrackCourier...")
                 # 2. Fast reliable fallback
-                await page.goto(f"https://trackcourier.io/track-and-trace/shadowfax/{clean_awb}", wait_until="domcontentloaded", timeout=8000)
+                await page.goto(f"https://trackcourier.io/track-and-trace/shadowfax/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
                 try:
@@ -216,29 +205,21 @@ class ShadowfaxScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="Shadowfax",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Shadowfax] Screenshot capture failed for {clean_awb}: {e}")
             return "-"
         finally:
             if page:
                 try:
-                    ctx = page.context
                     await page.close()
-                    if ctx:
-                        await ctx.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()

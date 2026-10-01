@@ -155,12 +155,12 @@ class EkartScraper(BaseScraper):
 
             try:
                 # 1. Primary: Official Ekart tracking portal
-                await page.goto(f"https://www.ekartlogistics.com/ekartlogistics-web/shipmenttrack/{clean_awb}", wait_until="domcontentloaded", timeout=15000)
+                await page.goto(f"https://www.ekartlogistics.com/ekartlogistics-web/shipmenttrack/{clean_awb}", wait_until="domcontentloaded", timeout=35000)
                 # Wait for tracking details or status to be rendered
-                for _ in range(12):
-                    await asyncio.sleep(0.6)
+                for _ in range(25):
+                    await asyncio.sleep(1.0)
                     content = await page.content()
-                    if clean_awb in content and any(k in content for k in ["Tracking Details", "Status", "Delivered", "Picked", "Awaiting", "Shipment", "No records", "not found"]):
+                    if clean_awb in content and any(k in content for k in ["Tracking Details", "Status", "Delivered", "Picked", "Awaiting", "Shipment"]):
                         break
                 # Zoom out Ekart page so full Tracking Details table fits on a single screen
                 try:
@@ -170,7 +170,7 @@ class EkartScraper(BaseScraper):
                     }""")
                 except Exception:
                     pass
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(0.8)
                 await page.bring_to_front()
                 await page.screenshot(path=screenshot_file, full_page=False)
                 try:
@@ -184,21 +184,11 @@ class EkartScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] Ekart error: {fe}")
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="Ekart",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_ek:
                 print(f"[Ekart] Official screenshot error: {e_ek}, falling back to TrackCourier...")
                 # 2. Fast reliable fallback
-                await page.goto(f"https://trackcourier.io/track-and-trace/ekart-logistics/{clean_awb}", wait_until="domcontentloaded", timeout=8000)
+                await page.goto(f"https://trackcourier.io/track-and-trace/ekart-logistics/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
                 try:
@@ -212,29 +202,21 @@ class EkartScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="Ekart",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Ekart] Screenshot capture failed for {clean_awb}: {e}")
             return "-"
         finally:
             if page:
                 try:
-                    ctx = page.context
                     await page.close()
-                    if ctx:
-                        await ctx.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()

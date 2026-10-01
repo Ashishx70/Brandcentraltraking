@@ -192,11 +192,11 @@ class BlueDartScraper(BaseScraper):
             await page.route("**/*", filter_route)
 
             try:
-                await page.goto(f"https://www.bluedart.com/trackdartresult?trackFor=0&trackNo={clean_awb}", wait_until="domcontentloaded", timeout=15000)
-                for _ in range(12):
-                    await asyncio.sleep(0.6)
+                await page.goto(f"https://www.bluedart.com/trackdartresult?trackFor=0&trackNo={clean_awb}", wait_until="domcontentloaded", timeout=35000)
+                for _ in range(25):
+                    await asyncio.sleep(1.0)
                     content = await page.content()
-                    if any(k in content for k in ["Shipment Delivered", "Waybill No", "Status and Scan", "Shipment Details", "No records", "not found", "Invalid"]):
+                    if any(k in content for k in ["Shipment Delivered", "Waybill No", "Status and Scan", "Shipment Details"]):
                         break
 
                 # Remove cookie consent banners, chat widgets, and overlays, and zoom out to fit full page
@@ -212,7 +212,7 @@ class BlueDartScraper(BaseScraper):
                 except Exception:
                     pass
 
-                await asyncio.sleep(0.6)
+                await asyncio.sleep(1.0)
                 await page.bring_to_front()
                 await page.screenshot(path=screenshot_file, full_page=False)
                 try:
@@ -226,21 +226,11 @@ class BlueDartScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] BlueDart error: {fe}")
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="BlueDart",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_bd:
                 print(f"[BlueDart] Official screenshot error: {e_bd}, falling back to TrackCourier...")
                 # Fast reliable fallback to TrackCourier for BlueDart
-                await page.goto(f"https://trackcourier.io/track-and-trace/blue-dart/{clean_awb}", wait_until="domcontentloaded", timeout=8000)
+                await page.goto(f"https://trackcourier.io/track-and-trace/blue-dart/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
                 try:
@@ -254,29 +244,21 @@ class BlueDartScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="BlueDart",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
         except Exception as ss_err:
             print(f"Failed to capture BlueDart screenshot for {clean_awb}: {ss_err}")
             return "-"
         finally:
             if page:
                 try:
-                    ctx = page.context
                     await page.close()
-                    if ctx:
-                        await ctx.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()

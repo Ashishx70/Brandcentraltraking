@@ -104,11 +104,11 @@ class DelhiveryScraper(BaseScraper):
                 """)
 
                 # 1. Primary: Official Delhivery Tracking Portal
-                await page.goto(f"https://www.delhivery.com/track-v2/package/{clean_awb}", wait_until="domcontentloaded", timeout=15000)
+                await page.goto(f"https://www.delhivery.com/track-v2/package/{clean_awb}", wait_until="domcontentloaded", timeout=45000)
 
-                # Poll rapidly (every 250ms) for tracking details or not-found status (up to 8s max)
+                # Poll rapidly (every 250ms) for tracking details to appear, capture instantly before popup
                 card_ready = False
-                for _ in range(32):
+                for _ in range(80):  # up to 20 seconds
                     await asyncio.sleep(0.25)
                     content = await page.content()
                     has_status = any(k in content for k in [
@@ -116,31 +116,24 @@ class DelhiveryScraper(BaseScraper):
                         "Out for Delivery", "Pending", "Order Details", 
                         "Shipment Picked", "Manifested", "Your order has been"
                     ])
-                    has_negative = any(k in content for k in [
-                        "No data found", "No records found", "Shipment not found",
-                        "Invalid AWB", "Tracking details not available", "cannot be tracked",
-                        "No scan records", "Awaiting"
-                    ])
                     is_loading = "Loading..." in content
 
-                    if (has_status or has_negative) and not is_loading:
+                    if has_status and not is_loading:
+                        # Found tracking details! Wait a brief 300ms for layout to settle, then capture immediately
                         await asyncio.sleep(0.3)
                         card_ready = True
                         break
 
                 if not card_ready:
-                    # Quick check on classic url (8s timeout)
-                    try:
-                        await page.goto(f"https://www.delhivery.com/track/package/{clean_awb}", wait_until="domcontentloaded", timeout=8000)
-                        for _ in range(12):
-                            await asyncio.sleep(0.4)
-                            content = await page.content()
-                            if any(k in content for k in ["AWB #", "Returned", "Delivered", "In Transit", "Out for Delivery", "Order Details", "No records"]):
-                                await asyncio.sleep(0.2)
-                                card_ready = True
-                                break
-                    except Exception:
-                        pass
+                    # Try classic official Delhivery URL if v2 was slow
+                    await page.goto(f"https://www.delhivery.com/track/package/{clean_awb}", wait_until="domcontentloaded", timeout=30000)
+                    for _ in range(30):
+                        await asyncio.sleep(0.5)
+                        content = await page.content()
+                        if any(k in content for k in ["AWB #", "Returned", "Delivered", "In Transit", "Out for Delivery", "Order Details"]):
+                            await asyncio.sleep(0.3)
+                            card_ready = True
+                            break
 
                 # Final safety cleanup for any OTP popup without removing React DOM nodes
                 try:
@@ -177,21 +170,11 @@ class DelhiveryScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] Delhivery error: {fe}")
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="Delhivery",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_primary:
                 print(f"[Delhivery] Official screenshot error: {e_primary}, falling back to TrackCourier...")
-                # 2. Fast reliable fallback to TrackCourier for Delhivery (8s timeout)
-                await page.goto(f"https://trackcourier.io/track-and-trace/delhivery/{clean_awb}", wait_until="domcontentloaded", timeout=8000)
+                # 2. Fast reliable fallback to TrackCourier for Delhivery
+                await page.goto(f"https://trackcourier.io/track-and-trace/delhivery/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
                 try:
@@ -205,29 +188,21 @@ class DelhiveryScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-
-                try:
-                    from services.drive_service import DriveService
-                    return await DriveService.upload_and_cleanup(
-                        image_path=screenshot_file,
-                        courier_name="Delhivery",
-                        clean_awb=clean_awb,
-                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
-                    )
-                except Exception:
-                    return f"/static/screenshots/{screenshot_filename}"
+                return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"Failed to capture Delhivery screenshot for {clean_awb}: {e}")
             return "-"
         finally:
             if page:
                 try:
-                    ctx = page.context
                     await page.close()
-                    if ctx:
-                        await ctx.close()
                 except Exception:
                     pass
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:

@@ -140,16 +140,48 @@ class DesktopFrameService:
         output_path: str = ""
     ) -> str:
         """
-        Applies a professional Google Chrome browser window and OS frame
-        around the actual captured tracking webpage screenshot.
-        Guarantees 100% accurate courier webpage capture without capturing
-        private desktop tabs or wrong windows.
+        Forces the Playwright Chrome popup window to the very front (HWND_TOPMOST + Maximized)
+        and captures the 100% REAL live Windows desktop screen (including the real popup
+        Google Chrome window, real URL bar, live tracking page, and real Windows Taskbar)
+        using PIL.ImageGrab.grab().
         """
         if not output_path:
             output_path = web_img_path
 
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                try:
+                    # Windows 8.1 / 10 / 11 Per-Monitor DPI awareness
+                    ctypes.windll.shcore.SetProcessDpiAwareness(2)
+                except Exception:
+                    try:
+                        # Windows 7 DPI awareness fallback
+                        ctypes.windll.user32.SetProcessDPIAware()
+                    except Exception:
+                        pass
+
+                from PIL import ImageGrab
+                DesktopFrameService._attach_default_desktop()
+                # Force the tracking Chrome window to the very front above localhost:8000
+                for _ in range(3):
+                    if DesktopFrameService.bring_tracking_window_to_front():
+                        break
+                    time.sleep(0.15)
+                # Allow Windows DWM 0.45s to finish painting the newly foregrounded topmost window
+                time.sleep(0.45)
+                DesktopFrameService.bring_tracking_window_to_front()
+                time.sleep(0.15)
+                real_screen = ImageGrab.grab()
+                real_screen.save(output_path, format="PNG")
+                print(f"[DesktopFrameService] Captured REAL OS desktop screenshot ({real_screen.size}) to {output_path}")
+                return output_path
+            except Exception as e:
+                print(f"[DesktopFrameService] Real OS screen grab fallback ({e}), using cloud server frame.")
+
+        # Cloud / Linux Headless Server fallback (where no physical Windows monitor exists)
         try:
-            from PIL import Image, ImageDraw
+            from PIL import Image, ImageDraw, ImageFont
             from datetime import datetime
             if os.path.exists(web_img_path):
                 web_img = Image.open(web_img_path).convert("RGB")
@@ -160,8 +192,8 @@ class DesktopFrameService:
                 draw = ImageDraw.Draw(canvas)
                 # Chrome tab bar + address bar
                 draw.rectangle([0, 0, w, 40], fill=(32, 33, 36))
-                draw.rounded_rectangle([12, 8, 280, 40], radius=8, fill=(53, 54, 58))
-                draw.text((28, 16), f"{courier_name or 'Courier'} Tracking - {awb}"[:36], fill=(232, 234, 237))
+                draw.rounded_rectangle([12, 8, 260, 40], radius=8, fill=(53, 54, 58))
+                draw.text((28, 16), f"{courier_name or 'Courier'} Tracking - {awb}"[:32], fill=(232, 234, 237))
                 draw.rectangle([0, 40, w, top_h], fill=(53, 54, 58))
                 draw.rounded_rectangle([110, 47, w - 60, 75], radius=14, fill=(32, 33, 36))
                 draw.text((130, 54), tracking_url or f"https://tracking/{awb}", fill=(232, 234, 237))
@@ -174,9 +206,8 @@ class DesktopFrameService:
                 draw.text((w - 95, ty + 10), now_dt.strftime("%I:%M %p"), fill=(240, 240, 240))
                 draw.text((w - 95, ty + 26), now_dt.strftime("%d-%m-%Y"), fill=(200, 200, 200))
                 canvas.save(output_path, format="PNG")
-                return output_path
-        except Exception as frame_err:
-            print(f"[DesktopFrameService] apply_frame error: {frame_err}")
+        except Exception as fallback_err:
+            print(f"[DesktopFrameService] Cloud fallback note: {fallback_err}")
 
         return output_path
 

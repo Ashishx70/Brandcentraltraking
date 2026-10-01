@@ -328,13 +328,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     updateStatsUI();
                     applyFilters(false);
-                    if (state.isTracking) {
+
+                    if (state.isTracking && state.progress < 100) {
                         progressPanel.style.visibility = 'visible';
                         progressBarFill.style.width = `${state.progress}%`;
                         progressPercent.textContent = `${state.progress}%`;
                         progressText.textContent = saved.progressText || 'Resuming tracking...';
                         startTrackingBtn.disabled = true;
-                        if (syncSelectedBtn) syncSelectedBtn.disabled = true;
                         pollProgress();
                     } else if (state.progress >= 100) {
                         progressPanel.style.visibility = 'visible';
@@ -755,11 +755,10 @@ document.addEventListener('DOMContentLoaded', () => {
             recalculateStats();
             saveSessionState();
 
-            if (data.status === 'completed') {
+            if (data.status === 'completed' || progress >= 100) {
                 state.isTracking = false;
                 progressText.textContent = 'Sync Completed!';
                 startTrackingBtn.disabled = false;
-                if (syncSelectedBtn) syncSelectedBtn.disabled = false;
                 if (state.selectedAwbs) state.selectedAwbs.clear();
                 updateSelectionUI();
                 saveSessionState();
@@ -770,7 +769,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.isTracking = false;
                 progressText.textContent = 'Sync Failed.';
                 startTrackingBtn.disabled = false;
-                if (syncSelectedBtn) syncSelectedBtn.disabled = false;
                 updateSelectionUI();
                 saveSessionState();
             } else {
@@ -1305,7 +1303,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Determine screenshot column markup
             const hasScreenshot = item.screenshot && item.screenshot !== '-';
-            const screenshotUrl = hasScreenshot ? (item.screenshot.startsWith('http') ? item.screenshot : `${item.screenshot.split('?')[0]}?t=${Date.now()}`) : '';
+            const screenshotUrl = hasScreenshot ? `${item.screenshot.split('?')[0]}?t=${Date.now()}` : '';
             const screenshotHtml = hasScreenshot ? 
                 `<a href="${screenshotUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>` : 
                 `<span class="gallery-icon-link no-screenshot" title="No screenshot captured (Fast Track)"><img src="/static/gallery_icon_red.png?v=3.4.0" alt="No Screenshot"></span>`;
@@ -1570,12 +1568,9 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const hasScreenshot = data.screenshot && data.screenshot !== '-';
             if (hasScreenshot) {
-                const isHttp = data.screenshot.startsWith('http');
-                const freshUrl = isHttp ? data.screenshot : `${data.screenshot.split('?')[0]}?t=${Date.now()}`;
-                const driveMatch = isHttp ? data.screenshot.match(/\/file\/d\/([a-zA-Z0-9_-]+)/) : null;
-                const imgSource = driveMatch ? `https://lh3.googleusercontent.com/d/${driveMatch[1]}` : freshUrl;
+                const freshUrl = `${data.screenshot.split('?')[0]}?t=${Date.now()}`;
                 resScreenshot.innerHTML = `<a href="${freshUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>`;
-                previewImg.src = imgSource;
+                previewImg.src = freshUrl;
                 previewRow.style.display = 'flex';
             } else {
                 resScreenshot.innerHTML = `<span class="gallery-icon-link no-screenshot" title="No screenshot captured (Fast Track)"><img src="/static/gallery_icon_red.png?v=3.4.0" alt="No Screenshot"></span>`;

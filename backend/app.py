@@ -9,12 +9,9 @@ from datetime import datetime
 import time
 import asyncio
 import sqlite3
-from typing import List, Optional, Dict
+from typing import List, Optional
 from pydantic import BaseModel
 import pandas as pd
-
-# Global registry to track active tracking tasks per task_id
-active_tracking_jobs: Dict[str, asyncio.Task] = {}
 
 # Set event loop policy on Windows for Playwright subprocess support
 if sys.platform == 'win32':
@@ -578,9 +575,9 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
     else:
         shipments_to_track = shipments
         
-    # Set status to running and reset progress to 0
+    # Set status to running
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE tasks SET status = ?, progress = ?, current_action = ? WHERE task_id = ?", ("running", 0, "Initializing tracking engine...", task_id))
+    conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", ("running", task_id))
     conn.commit()
     conn.close()
     
@@ -618,9 +615,6 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
         conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", ("completed", task_id))
         conn.commit()
         conn.close()
-    except asyncio.CancelledError:
-        print(f"[run_tracking_simulation] Task {task_id} was cancelled gracefully.")
-        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -707,7 +701,6 @@ async def query_single_shipment(body: QuerySingleRequest):
 async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTasks):
     task_id = body.task_id
     capture_screenshot = body.capture_screenshot or False
-    selected_tracking_numbers = body.selected_tracking_numbers or None
     
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -717,7 +710,7 @@ async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTa
     # Self-healing: If task doesn't exist in DB (e.g. server woke up or restarted), re-create it if shipments are sent
     if not exists:
         if body.shipments:
-            cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "running", 0, "Starting sync..."))
+            cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "pending", 0, "Ready to start"))
             for s in body.shipments:
                 cursor.execute("""
                 INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
@@ -748,54 +741,9 @@ async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTa
         else:
             conn.close()
             raise HTTPException(status_code=404, detail="Task ID not found")
-    else:
-        # Reset existing task status and progress to 0 so immediate polling doesn't see old completed status!
-        cursor.execute("UPDATE tasks SET status = 'running', progress = 0, current_action = 'Starting sync...' WHERE task_id = ?", (task_id,))
-        cursor.execute("DELETE FROM logs WHERE task_id = ?", (task_id,))
-        # If shipments table had no rows for this task, populate them
-        cursor.execute("SELECT COUNT(*) FROM shipments WHERE task_id = ?", (task_id,))
-        s_count = cursor.fetchone()[0]
-        if s_count == 0 and body.shipments:
-            for s in body.shipments:
-                cursor.execute("""
-                INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    task_id,
-                    s.get("channel", ""),
-                    s.get("seller_name", ""),
-                    s.get("return_date", ""),
-                    s.get("return_id", ""),
-                    s.get("mp_date", ""),
-                    s.get("days_left", ""),
-                    s.get("invoice_no", ""),
-                    s.get("order_id", ""),
-                    s.get("item_sku", ""),
-                    s.get("amt", ""),
-                    s["tracking_number"],
-                    s.get("courier", "Delhivery"),
-                    s.get("platform_status", ""),
-                    s.get("status", "Pending"),
-                    s.get("last_location", "Awaiting scan"),
-                    s.get("timestamp", "-"),
-                    s.get("last_sync", "-"),
-                    s.get("screenshot", "-")
-                ))
-        conn.commit()
-    conn.close()
-
-    # Cancel previous background job if still running for this task_id to prevent duplicate workers
-    if task_id in active_tracking_jobs:
-        prev_job = active_tracking_jobs[task_id]
-        if not prev_job.done():
-            prev_job.cancel()
-            try:
-                await asyncio.sleep(0.05)
-            except Exception:
-                pass
-
-    job = asyncio.create_task(run_tracking_simulation(task_id, capture_screenshot, selected_tracking_numbers))
-    active_tracking_jobs[task_id] = job
+            
+    selected_tracking_numbers = body.selected_tracking_numbers or None
+    background_tasks.add_task(run_tracking_simulation, task_id, capture_screenshot, selected_tracking_numbers)
     return {"status": "started"}
 
 
@@ -1240,31 +1188,16 @@ async def download_screenshots(body: DownloadScreenshotsRequest):
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         added_awbs = set()
         
-        # 1. From database records (Google Drive URLs or local disk paths)
+        # 1. From database records (exact registered screenshot path with courier name)
         for awb, courier, sc_path in target_screenshots:
             if awb in added_awbs:
                 continue
-            if str(sc_path).startswith("http"):
-                try:
-                    import re
-                    m = re.search(r'/file/d/([a-zA-Z0-9_-]+)', str(sc_path))
-                    if m:
-                        drive_id = m.group(1)
-                        img_url = f"https://lh3.googleusercontent.com/d/{drive_id}"
-                        req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
-                        with urllib.request.urlopen(req, timeout=15) as resp:
-                            zip_file.writestr(f"{awb}_{courier}.jpg", resp.read())
-                            added_awbs.add(awb)
-                            found_count += 1
-                except Exception as dl_err:
-                    print(f"[DownloadScreenshots] Drive download note for {awb}: {dl_err}")
-            else:
-                filename = os.path.basename(sc_path)
-                disk_path = os.path.join(SCREENSHOTS_DIR, filename)
-                if os.path.exists(disk_path):
-                    zip_file.write(disk_path, arcname=filename)
-                    added_awbs.add(awb)
-                    found_count += 1
+            filename = os.path.basename(sc_path)
+            disk_path = os.path.join(SCREENSHOTS_DIR, filename)
+            if os.path.exists(disk_path):
+                zip_file.write(disk_path, arcname=filename)
+                added_awbs.add(awb)
+                found_count += 1
                 
         # 2. Disk fallback: Only select files with courier name ({awb}_{courier}.png)
         all_disk_files = [f for f in os.listdir(SCREENSHOTS_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
