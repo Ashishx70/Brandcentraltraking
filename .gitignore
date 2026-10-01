@@ -6,6 +6,8 @@ backend/tracking.db
 backend/uploads/
 backend/outputs/
 backend/static/screenshots/*.png
+backend/static/screenshots/*.jpg
+backend/static/screenshots/*.jpeg
 .env
 .venv/
 cloudflared.exe

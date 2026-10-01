@@ -506,8 +506,8 @@ class XpressBeesScraper(BaseScraper):
             try:
                 # 1. Primary: Official XpressBees website with full View details
                 official_url = f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
-                await page.goto(official_url, wait_until="domcontentloaded", timeout=40000)
-                await asyncio.sleep(1.5)
+                await page.goto(official_url, wait_until="domcontentloaded", timeout=15000)
+                await asyncio.sleep(1.0)
 
                 # Check if results already loaded
                 content_initial = await page.content()
@@ -520,8 +520,8 @@ class XpressBeesScraper(BaseScraper):
                         if await cb.count() > 0:
                             await cb.click()
                             # Wait for Altcha PoW verification to actually complete (not just checkbox checked)
-                            for attempt_v in range(60):
-                                await asyncio.sleep(0.5)
+                            for attempt_v in range(16):
+                                await asyncio.sleep(0.4)
                                 is_verified = await page.evaluate("""() => {
                                     const w = document.querySelector('altcha-widget, .altcha');
                                     if (w && (w.getAttribute('state') === 'verified' || w.getAttribute('data-state') === 'verified' || w.classList.contains('verified'))) return true;
@@ -531,7 +531,7 @@ class XpressBeesScraper(BaseScraper):
                                 }""")
                                 if is_verified or attempt_v >= 7:
                                     break
-                            await asyncio.sleep(0.8)
+                            await asyncio.sleep(0.5)
 
                         # Trigger form submit via submit button
                         try:
@@ -554,15 +554,15 @@ class XpressBeesScraper(BaseScraper):
                     except Exception as altcha_err:
                         print(f"[Xpressbees] Altcha interaction note: {altcha_err}")
 
-                # Wait up to 45 seconds for results table to populate
+                # Wait up to 12 seconds for results table to populate
                 results_ready = False
-                for s in range(45):
-                    await asyncio.sleep(1.0)
+                for s in range(12):
+                    await asyncio.sleep(0.8)
                     content = await page.content()
                     if any(k in content for k in [
                         "Your Domestic Shipments", "Shipping Details", "Shipment History",
                         "Return Delivered", "Data Received",
-                        "RPCancel", "Rpcancel", "OutForPickUp", "No Records"
+                        "RPCancel", "Rpcancel", "OutForPickUp", "No Records", "No Data Found", "Invalid"
                     ]):
                         results_ready = True
                         break
@@ -641,11 +641,21 @@ class XpressBeesScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] Xpressbees error: {fe}")
-                return f"/static/screenshots/{screenshot_filename}"
+
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception:
+                    return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_xb:
                 print(f"[Xpressbees] Official screenshot error: {e_xb}, falling back to TrackCourier...")
                 # 2. Fast reliable fallback
-                await page.goto(f"https://trackcourier.io/track-and-trace/xpressbees-logistics/{clean_awb}", wait_until="domcontentloaded", timeout=12000)
+                await page.goto(f"https://trackcourier.io/track-and-trace/xpressbees-logistics/{clean_awb}", wait_until="domcontentloaded", timeout=8000)
                 card = page.locator(".block.m-b-2, .card, body").first
                 await card.screenshot(path=screenshot_file)
                 try:
@@ -659,19 +669,27 @@ class XpressBeesScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-                return f"/static/screenshots/{screenshot_filename}"
+
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception:
+                    return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Xpressbees] Screenshot capture failed for {clean_awb}: {e}")
             return "-"
         finally:
             if page:
                 try:
+                    ctx = page.context
                     await page.close()
+                    if ctx:
+                        await ctx.close()
                 except Exception:
                     pass
-            try:
-                from browser.playwright_manager import playwright_manager
-                await playwright_manager.close_browser()
-            except Exception:
-                pass
 

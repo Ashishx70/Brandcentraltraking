@@ -123,35 +123,45 @@ class TrackingService:
                             shipment=shipment
                         )
                 
-                # Safe pacing between worker tasks
-                if "shadowfax" in courier.lower():
+                # Safe pacing between worker tasks to prevent courier IP rate-limiting
+                if capture_screenshot:
                     await asyncio.sleep(0.4)
+                elif "shadowfax" in courier.lower():
+                    await asyncio.sleep(0.3)
                 else:
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.15)
 
-        # Launch all tasks controlled by the semaphore
-        tasks = [asyncio.create_task(track_single(s)) for s in shipments]
-        await asyncio.gather(*tasks)
+        try:
+            # Launch all tasks controlled by the semaphore
+            tasks = [asyncio.create_task(track_single(s)) for s in shipments]
+            await asyncio.gather(*tasks)
 
-        elapsed_time = time.time() - start_time
-        mins = int(elapsed_time // 60)
-        secs = int(elapsed_time % 60)
-        time_formatted = f"{mins}m {secs}s" if mins > 0 else f"{elapsed_time:.1f}s"
-        avg_speed = elapsed_time / total if total > 0 else 0
-        
-        summary_msg = f"[DONE] Batch Finished! Tracked {total} AWBs in {time_formatted} (Avg: {avg_speed:.2f}s/AWB) with 3 Workers"
-        print(f"\n==================================================")
-        print(f"[DONE] [BATCH TRACKING COMPLETED]")
-        print(f"   Total AWBs  : {total}")
-        print(f"   Total Time  : {time_formatted} ({elapsed_time:.2f} seconds)")
-        print(f"   Avg per AWB : {avg_speed:.2f}s")
-        print(f"==================================================\n")
+            elapsed_time = time.time() - start_time
+            mins = int(elapsed_time // 60)
+            secs = int(elapsed_time % 60)
+            time_formatted = f"{mins}m {secs}s" if mins > 0 else f"{elapsed_time:.1f}s"
+            avg_speed = elapsed_time / total if total > 0 else 0
+            
+            summary_msg = f"[DONE] Batch Finished! Tracked {total} AWBs in {time_formatted} (Avg: {avg_speed:.2f}s/AWB)"
+            print(f"\n==================================================")
+            print(f"[DONE] [BATCH TRACKING COMPLETED]")
+            print(f"   Total AWBs  : {total}")
+            print(f"   Total Time  : {time_formatted} ({elapsed_time:.2f} seconds)")
+            print(f"   Avg per AWB : {avg_speed:.2f}s")
+            print(f"==================================================\n")
 
-        # Final completion update
-        await progress_callback(
-            progress=100,
-            current_action=f"Completed in {time_formatted}",
-            log_message=summary_msg,
-            log_level="success"
-        )
+            # Final completion update
+            await progress_callback(
+                progress=100,
+                current_action=f"Completed in {time_formatted}",
+                log_message=summary_msg,
+                log_level="success"
+            )
+        finally:
+            if capture_screenshot:
+                try:
+                    from browser.playwright_manager import playwright_manager
+                    await playwright_manager.close_browser()
+                except Exception:
+                    pass
 
