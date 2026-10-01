@@ -739,11 +739,269 @@ class XpressBeesScraper(BaseScraper):
 
     async def _capture_screenshot(self, clean_awb: str, api_data: dict = None) -> str:
         """
-        Captures screenshot ONLY when explicitly requested (capture_screenshot=True).
-        Uses a lightweight Playwright session with a strict 7s timeout.
-        On headless Render (Linux), renders a beautiful HTML template using api_data
-        since the Altcha JS Web Worker doesn't complete in headless environments.
+        Official XpressBees site screenshot — both Render (Linux) and Windows.
+        Strategy: Python solves Altcha challenge, injects token into browser form,
+        submits, waits for tracking page to load, takes screenshot.
+        CONFIRMED: Server accepts independently-fetched Altcha tokens (tested).
         """
+        page = None
+        try:
+            try:
+                from browser.playwright_manager import playwright_manager
+            except ImportError:
+                import sys as _sys2
+                backend_dir2 = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                if backend_dir2 not in _sys2.path:
+                    _sys2.path.insert(0, backend_dir2)
+                from browser.playwright_manager import playwright_manager
+
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            screenshot_filename = f"{clean_awb}_Xpressbees.png"
+            screenshot_file = os.path.join(backend_dir, "static", "screenshots", screenshot_filename)
+            os.makedirs(os.path.dirname(screenshot_file), exist_ok=True)
+
+            # ─────────────────────────────────────────────────────────────
+            # STEP 1: Solve Altcha in Python (works on any OS, any env)
+            # ─────────────────────────────────────────────────────────────
+            solved_token = None
+            try:
+                import requests as _req
+                _headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Origin": "https://www.xpressbees.com",
+                    "Referer": f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
+                }
+                r_ch = _req.get("https://altcha-api.xbees.in/v1/challenge", headers=_headers, timeout=8)
+                if r_ch.status_code == 200:
+                    ch_data = r_ch.json()
+                    num = solve_altcha(ch_data["challenge"], ch_data["salt"], ch_data.get("maxnumber", 100000))
+                    if num is not None:
+                        payload_obj = {
+                            "algorithm": ch_data.get("algorithm", "SHA-256"),
+                            "challenge": ch_data["challenge"],
+                            "number": num,
+                            "salt": ch_data["salt"],
+                            "signature": ch_data["signature"]
+                        }
+                        solved_token = base64.b64encode(json.dumps(payload_obj).encode('utf-8')).decode('utf-8')
+                        print(f"[Xpressbees] Altcha solved in Python, token len={len(solved_token)}")
+            except Exception as altcha_err:
+                print(f"[Xpressbees] Python Altcha solve error: {altcha_err}")
+
+            # ─────────────────────────────────────────────────────────────
+            # STEP 2: Open official XpressBees page in Playwright
+            # ─────────────────────────────────────────────────────────────
+            official_url = f"https://www.xpressbees.com/shipment/tracking?awbNo={clean_awb}"
+            page = await playwright_manager.new_page(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+            )
+            await page.add_init_script("delete navigator.__proto__.webdriver;")
+            await page.set_viewport_size({"width": 1440, "height": 900})
+
+            async def intercept(route):
+                req = route.request
+                url_lower = req.url.lower()
+                if req.resource_type in ["media", "font"]:
+                    await route.abort()
+                    return
+                ignored = ["google-analytics", "doubleclick", "adsense", "facebook", "criteo", "pubmatic"]
+                if any(kw in url_lower for kw in ignored):
+                    await route.abort()
+                    return
+                await route.continue_()
+
+            await page.route("**/*", intercept)
+            await page.goto(official_url, wait_until="domcontentloaded", timeout=25000)
+            await asyncio.sleep(1.5)
+
+            # Remove popups
+            await page.evaluate("""() => {
+                document.querySelectorAll('div[class*="modal"], div[class*="popup"], div[role="dialog"]').forEach(e => e.remove());
+            }""")
+
+            # Check if tracking already loaded (URL with AWB pre-filled sometimes auto-loads)
+            content_check = await page.content()
+            already_loaded = any(k in content_check for k in [
+                "Shipping Details", "Shipment History", "Your Domestic Shipments"
+            ])
+
+            if not already_loaded:
+                # ─────────────────────────────────────────────────────────────
+                # STEP 3: Inject Python-solved token and submit form
+                # ─────────────────────────────────────────────────────────────
+                if solved_token:
+                    injected = await page.evaluate("""(token) => {
+                        // Try altcha-widget shadow root
+                        const widget = document.querySelector('altcha-widget');
+                        if (widget && widget.shadowRoot) {
+                            const inp = widget.shadowRoot.querySelector('input[name="altcha"]');
+                            if (inp) { inp.value = token; return 'shadow'; }
+                        }
+                        // Try regular DOM hidden input
+                        const inp2 = document.querySelector('input[name="altcha"]');
+                        if (inp2) { inp2.value = token; return 'dom'; }
+                        // Create and append to form
+                        const f = document.querySelector('form');
+                        if (f) {
+                            let h = document.createElement('input');
+                            h.type = 'hidden'; h.name = 'altcha'; h.value = token;
+                            f.appendChild(h); return 'created';
+                        }
+                        return 'not-found';
+                    }""", solved_token)
+                    print(f"[Xpressbees] Token inject result: {injected}")
+
+                # Click Search button (try multiple selectors)
+                clicked = False
+                for sel in [
+                    'button.sc-fTyFcS.gRKEpD',
+                    'button:has(img[alt="Submit Button"])',
+                    'button[type="submit"]',
+                    'form button'
+                ]:
+                    try:
+                        btn = page.locator(sel).first
+                        if await btn.count() > 0:
+                            await btn.click()
+                            clicked = True
+                            print(f"[Xpressbees] Clicked button: {sel}")
+                            break
+                    except Exception:
+                        pass
+
+                if not clicked:
+                    await page.evaluate("""() => {
+                        const f = document.querySelector('form');
+                        if (f && f.requestSubmit) f.requestSubmit();
+                        else if (f) f.submit();
+                    }""")
+
+                # ─────────────────────────────────────────────────────────────
+                # STEP 4: Wait up to 40s for tracking content to appear
+                # Also retry submit at intervals if not loaded
+                # ─────────────────────────────────────────────────────────────
+                results_ready = False
+                for attempt in range(50):
+                    await asyncio.sleep(0.8)
+                    content = await page.content()
+                    if any(k in content for k in [
+                        "Your Domestic Shipments", "Shipping Details", "Shipment History",
+                        "Return Delivered", "Data Received", "DLVD", "Delivered",
+                        "RPCancel", "OutForPickUp", "No Records", "No Data Found", "Invalid"
+                    ]):
+                        results_ready = True
+                        break
+                    # Retry submit at second 8 and 16 in case first click didn't register
+                    if attempt in [10, 20] and solved_token:
+                        print(f"[Xpressbees] Retry submit at attempt {attempt}...")
+                        await page.evaluate("""() => {
+                            const f = document.querySelector('form');
+                            if (f && f.requestSubmit) f.requestSubmit();
+                        }""")
+            else:
+                results_ready = True
+                print(f"[Xpressbees] Page auto-loaded tracking data!")
+
+            if not results_ready:
+                raise Exception("Official XpressBees page did not load tracking data after 40s")
+
+            # ─────────────────────────────────────────────────────────────
+            # STEP 5: Expand 'View' → clean → zoom → screenshot
+            # ─────────────────────────────────────────────────────────────
+            try:
+                await page.evaluate("""() => {
+                    const all = Array.from(document.querySelectorAll('*'));
+                    const viewEl = all.find(e => e.children.length === 0 && e.textContent.trim() === 'View');
+                    if (viewEl) viewEl.click();
+                }""")
+                await asyncio.sleep(1.0)
+            except Exception:
+                pass
+
+            await page.evaluate("""() => {
+                document.querySelectorAll('div[class*="modal"], div[class*="popup"], div[role="dialog"]').forEach(e => e.remove());
+                const style = document.createElement('style');
+                style.innerHTML = '* { -webkit-font-smoothing: antialiased !important; text-rendering: geometricPrecision !important; }';
+                document.head.appendChild(style);
+                document.documentElement.style.zoom = '65%';
+                window.scrollTo(0, 155);
+            }""")
+            await asyncio.sleep(0.6)
+
+            await page.screenshot(path=screenshot_file, full_page=False)
+            print(f"[Xpressbees] Official screenshot captured: {screenshot_filename}")
+
+            try:
+                from services.desktop_frame_service import DesktopFrameService
+                DesktopFrameService.apply_frame(
+                    web_img_path=screenshot_file,
+                    courier_name="Xpressbees",
+                    awb=clean_awb,
+                    tracking_url=f"https://www.xpressbees.com/track?isawb=Yes&trackid={clean_awb}",
+                    output_path=screenshot_file
+                )
+            except Exception as fe:
+                print(f"[DesktopFrame] Xpressbees error: {fe}")
+
+            try:
+                from services.drive_service import DriveService
+                return await DriveService.upload_and_cleanup(
+                    image_path=screenshot_file,
+                    courier_name="Xpressbees",
+                    clean_awb=clean_awb,
+                    fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                )
+            except Exception:
+                return f"/static/screenshots/{screenshot_filename}"
+
+        except Exception as e:
+            print(f"[Xpressbees] Official screenshot failed: {e} — falling back to TrackCourier.io")
+            try:
+                if page:
+                    await page.goto(
+                        f"https://trackcourier.io/track-and-trace/xpressbees-logistics/{clean_awb}",
+                        wait_until="domcontentloaded", timeout=10000
+                    )
+                    await asyncio.sleep(3)
+                    card = page.locator(".block.m-b-2, .card, body").first
+                    await card.screenshot(path=screenshot_file)
+                    try:
+                        from services.desktop_frame_service import DesktopFrameService
+                        DesktopFrameService.apply_frame(
+                            web_img_path=screenshot_file,
+                            courier_name="Xpressbees",
+                            awb=clean_awb,
+                            tracking_url=f"https://www.xpressbees.com/track?isawb=Yes&trackid={clean_awb}",
+                            output_path=screenshot_file
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        from services.drive_service import DriveService
+                        return await DriveService.upload_and_cleanup(
+                            image_path=screenshot_file,
+                            courier_name="Xpressbees",
+                            clean_awb=clean_awb,
+                            fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                        )
+                    except Exception:
+                        return f"/static/screenshots/{screenshot_filename}"
+            except Exception as fb_err:
+                print(f"[Xpressbees] Fallback also failed: {fb_err}")
+            return "-"
+        finally:
+            if page:
+                try:
+                    ctx = page.context
+                    await page.close()
+                    if ctx:
+                        await ctx.close()
+                except Exception:
+                    pass
+
+
+
+
         page = None
         try:
             try:
