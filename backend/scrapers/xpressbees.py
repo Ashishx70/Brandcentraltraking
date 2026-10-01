@@ -379,6 +379,281 @@ def fetch_trackcourier_http(clean_awb: str) -> dict:
     return {"success": False}
 
 
+def _build_xpressbees_html(awb: str, api_data: dict) -> str:
+    """
+    Builds a beautiful XpressBees-branded HTML tracking page for headless screenshot.
+    Used on Render (Linux) where the Altcha JS worker does not complete.
+    """
+    status = api_data.get("status", "In Transit")
+    last_location = api_data.get("last_location", "-")
+    timestamp = api_data.get("timestamp", "-")
+    events = api_data.get("events", [])
+
+    # Status badge color
+    status_lower = status.lower()
+    if any(w in status_lower for w in ["deliver", "dlvd"]):
+        badge_color = "#16a34a"
+        badge_bg = "#dcfce7"
+        dot_color = "#16a34a"
+    elif any(w in status_lower for w in ["out for", "transit", "dispatch", "intransit"]):
+        badge_color = "#ea580c"
+        badge_bg = "#fff7ed"
+        dot_color = "#ea580c"
+    elif any(w in status_lower for w in ["return", "rto", "cancel"]):
+        badge_color = "#dc2626"
+        badge_bg = "#fee2e2"
+        dot_color = "#dc2626"
+    elif any(w in status_lower for w in ["pick", "received", "booked"]):
+        badge_color = "#2563eb"
+        badge_bg = "#dbeafe"
+        dot_color = "#2563eb"
+    else:
+        badge_color = "#7c3aed"
+        badge_bg = "#ede9fe"
+        dot_color = "#7c3aed"
+
+    # Build event rows
+    events_html = ""
+    if events:
+        for i, ev in enumerate(events):
+            ev_status = ev.get("status", ev.get("activity", "Update"))
+            ev_location = ev.get("location", "")
+            ev_time = ev.get("timestamp", ev.get("time", ""))
+            is_first = i == 0
+            dot_style = f"background:{dot_color}; box-shadow: 0 0 0 4px {badge_bg};" if is_first else "background:#d1d5db;"
+            text_weight = "font-weight:700; color:#111827;" if is_first else "color:#374151;"
+            events_html += f"""
+            <div style="display:flex; gap:16px; align-items:flex-start; padding:14px 0; border-bottom:1px solid #f3f4f6;">
+                <div style="display:flex; flex-direction:column; align-items:center; padding-top:4px;">
+                    <div style="width:14px; height:14px; border-radius:50%; {dot_style} flex-shrink:0;"></div>
+                    {"" if i == len(events)-1 else '<div style="width:2px; flex:1; background:#e5e7eb; margin-top:4px; min-height:24px;"></div>'}
+                </div>
+                <div style="flex:1; min-width:0;">
+                    <div style="{text_weight} font-size:14px; line-height:1.4;">{ev_status}</div>
+                    {f'<div style="font-size:12px; color:#6b7280; margin-top:2px;">📍 {ev_location}</div>' if ev_location else ''}
+                    {f'<div style="font-size:12px; color:#9ca3af; margin-top:2px;">🕐 {ev_time}</div>' if ev_time else ''}
+                </div>
+            </div>"""
+    else:
+        events_html = '<div style="color:#6b7280; font-size:14px; padding:20px 0;">No event history available.</div>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XpressBees Tracking - {awb}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f8fafc;
+    color: #1f2937;
+    min-height: 100vh;
+  }}
+  .header {{
+    background: linear-gradient(135deg, #ff6b00 0%, #ff8c00 50%, #e55a00 100%);
+    padding: 18px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 4px 12px rgba(255,107,0,0.3);
+  }}
+  .logo-area {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .logo-icon {{
+    width: 42px;
+    height: 42px;
+    background: white;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 900;
+    color: #ff6b00;
+    letter-spacing: -1px;
+  }}
+  .logo-text {{
+    color: white;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }}
+  .logo-sub {{
+    color: rgba(255,255,255,0.8);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }}
+  .header-awb {{
+    background: rgba(255,255,255,0.2);
+    color: white;
+    padding: 6px 16px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 600;
+    border: 1px solid rgba(255,255,255,0.3);
+  }}
+  .container {{
+    max-width: 900px;
+    margin: 24px auto;
+    padding: 0 24px;
+  }}
+  .card {{
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.04);
+    overflow: hidden;
+    margin-bottom: 20px;
+  }}
+  .card-header {{
+    padding: 18px 24px;
+    border-bottom: 1px solid #f3f4f6;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }}
+  .card-title {{
+    font-size: 16px;
+    font-weight: 700;
+    color: #111827;
+  }}
+  .card-body {{
+    padding: 20px 24px;
+  }}
+  .status-badge {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 700;
+    background: {badge_bg};
+    color: {badge_color};
+    border: 1.5px solid {badge_color}22;
+  }}
+  .status-dot {{
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: {badge_color};
+    animation: pulse 1.5s infinite;
+  }}
+  @keyframes pulse {{
+    0%, 100% {{ opacity: 1; transform: scale(1); }}
+    50% {{ opacity: 0.6; transform: scale(0.85); }}
+  }}
+  .info-grid {{
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+    margin-top: 16px;
+  }}
+  .info-cell {{
+    background: #f9fafb;
+    border-radius: 10px;
+    padding: 14px 16px;
+    border: 1px solid #e5e7eb;
+  }}
+  .info-label {{
+    font-size: 11px;
+    font-weight: 600;
+    color: #9ca3af;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+  }}
+  .info-value {{
+    font-size: 14px;
+    font-weight: 600;
+    color: #111827;
+    line-height: 1.3;
+  }}
+  .section-icon {{
+    width: 28px;
+    height: 28px;
+    background: #fff7ed;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
+  }}
+  .footer {{
+    text-align: center;
+    padding: 16px;
+    color: #9ca3af;
+    font-size: 11px;
+  }}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="logo-area">
+    <div class="logo-icon">XB</div>
+    <div>
+      <div class="logo-text">XpressBees</div>
+      <div class="logo-sub">Shipment Tracking</div>
+    </div>
+  </div>
+  <div class="header-awb">AWB: {awb}</div>
+</div>
+
+<div class="container">
+  <!-- Shipping Details Card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="section-icon">📦</div>
+      <div class="card-title">Shipping Details</div>
+    </div>
+    <div class="card-body">
+      <div class="status-badge">
+        <div class="status-dot"></div>
+        {status}
+      </div>
+      <div class="info-grid">
+        <div class="info-cell">
+          <div class="info-label">AWB Number</div>
+          <div class="info-value">{awb}</div>
+        </div>
+        <div class="info-cell">
+          <div class="info-label">Last Location</div>
+          <div class="info-value">{last_location if last_location and last_location != "-" else "—"}</div>
+        </div>
+        <div class="info-cell">
+          <div class="info-label">Last Updated</div>
+          <div class="info-value">{timestamp if timestamp and timestamp != "-" else "—"}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shipment History Card -->
+  <div class="card">
+    <div class="card-header">
+      <div class="section-icon">🕐</div>
+      <div class="card-title">Shipment History</div>
+      <span style="margin-left:auto; font-size:12px; color:#9ca3af;">{len(events)} events</span>
+    </div>
+    <div class="card-body">
+      {events_html}
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  Powered by XpressBees Logistics · xpressbees.com
+</div>
+</body>
+</html>"""
+
+
 class XpressBeesScraper(BaseScraper):
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()
@@ -391,7 +666,7 @@ class XpressBeesScraper(BaseScraper):
             if web_res.get("success"):
                 screenshot_path = "-"
                 if capture_screenshot:
-                    screenshot_path = await self._capture_screenshot(clean_awb)
+                    screenshot_path = await self._capture_screenshot(clean_awb, api_data=web_res)
                 return {
                     "status": web_res["status"],
                     "last_location": web_res["last_location"],
@@ -410,7 +685,7 @@ class XpressBeesScraper(BaseScraper):
             if api_res.get("success"):
                 screenshot_path = "-"
                 if capture_screenshot:
-                    screenshot_path = await self._capture_screenshot(clean_awb)
+                    screenshot_path = await self._capture_screenshot(clean_awb, api_data=api_res)
                 return {
                     "status": api_res["status"],
                     "last_location": api_res["last_location"],
@@ -436,7 +711,7 @@ class XpressBeesScraper(BaseScraper):
                         "events": tc_res.get("events", [])
                     }
                 else:
-                    screenshot_path = await self._capture_screenshot(clean_awb)
+                    screenshot_path = await self._capture_screenshot(clean_awb, api_data=tc_res)
                     return {
                         "status": tc_res["status"],
                         "last_location": tc_res["last_location"],
@@ -462,10 +737,12 @@ class XpressBeesScraper(BaseScraper):
             "events": []
         }
 
-    async def _capture_screenshot(self, clean_awb: str) -> str:
+    async def _capture_screenshot(self, clean_awb: str, api_data: dict = None) -> str:
         """
         Captures screenshot ONLY when explicitly requested (capture_screenshot=True).
         Uses a lightweight Playwright session with a strict 7s timeout.
+        On headless Render (Linux), renders a beautiful HTML template using api_data
+        since the Altcha JS Web Worker doesn't complete in headless environments.
         """
         page = None
         try:
@@ -482,6 +759,48 @@ class XpressBeesScraper(BaseScraper):
             screenshot_file = os.path.join(backend_dir, "static", "screenshots", screenshot_filename)
             os.makedirs(os.path.dirname(screenshot_file), exist_ok=True)
 
+            import sys as _sys
+
+            # ==============================================================
+            # HEADLESS PATH (Render / Linux): Render HTML template directly
+            # Altcha JS Web Worker fails silently in headless environments
+            # ==============================================================
+            is_headless_env = (_sys.platform != "win32") or (not os.environ.get("DISPLAY", "") and _sys.platform != "win32")
+            if is_headless_env and api_data and api_data.get("success"):
+                print(f"[Xpressbees] Headless env detected — rendering HTML template for {clean_awb}")
+                html = _build_xpressbees_html(clean_awb, api_data)
+                page = await playwright_manager.new_page(
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+                )
+                await page.set_viewport_size({"width": 1280, "height": 900})
+                await page.set_content(html, wait_until="networkidle")
+                await asyncio.sleep(0.5)
+                await page.screenshot(path=screenshot_file, full_page=False)
+                try:
+                    from services.desktop_frame_service import DesktopFrameService
+                    DesktopFrameService.apply_frame(
+                        web_img_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        awb=clean_awb,
+                        tracking_url=f"https://www.xpressbees.com/track?isawb=Yes&trackid={clean_awb}",
+                        output_path=screenshot_file
+                    )
+                except Exception as fe:
+                    print(f"[DesktopFrame] Xpressbees HTML template error: {fe}")
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception:
+                    return f"/static/screenshots/{screenshot_filename}"
+
+            # ==============================================================
+            # WINDOWS PATH (Local): Use official XpressBees site + Altcha
+            # ==============================================================
             url = f"https://trackcourier.io/track-and-trace/xpressbees-logistics/{clean_awb}"
             page = await playwright_manager.new_page(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
