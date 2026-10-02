@@ -115,15 +115,15 @@ body {
     color: var(--text-muted);
 }
 
-/* Slim Header Stats */
+/* Header Stats - Displayed directly without oval container for maximum size and clarity */
 .header-stats {
     display: flex;
     align-items: center;
-    gap: 20px;
-    background: #f8fafc;
-    padding: 8px 24px;
-    border-radius: 50px;
-    border: 1px solid var(--card-border);
+    gap: 22px;
+    background: transparent;
+    padding: 0;
+    border: none;
+    border-radius: 0;
     flex-wrap: wrap;
     transition: var(--transition-smooth);
 }
@@ -132,18 +132,18 @@ body {
     display: flex;
     align-items: center;
     gap: 7px;
-    font-size: 1.02rem;
 }
 
 .stat-lbl {
     font-weight: 600;
-    font-size: 0.98rem;
+    font-size: 1.22rem;
     color: var(--text-muted);
 }
 
 .stat-val {
-    font-size: 1.14rem;
+    font-size: 1.55rem;
     font-weight: 800;
+    line-height: 1;
 }
 
 .text-delivered {
@@ -162,53 +162,55 @@ body {
     color: #7c3aed;
 }
 
-/* Header Live ETA Section (Visible during sync in pehle wali patti) */
+/* Header Live ETA Section (Direct display in header bar) */
 .header-stat-divider {
     width: 2px;
-    height: 22px;
+    height: 28px;
     background-color: #cbd5e1;
-    margin: 0 6px;
+    margin: 0 8px;
     border-radius: 2px;
 }
 
 .header-eta-group {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 22px;
 }
 
 .header-stat-eta {
     display: flex;
     align-items: center;
-    gap: 7px;
-    font-size: 1.02rem;
+    gap: 8px;
 }
 
 .header-eta-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 18px;
-    height: 18px;
+    width: 24px;
+    height: 24px;
     flex-shrink: 0;
 }
 
 .text-synced {
     color: #4f46e5;
-    font-size: 1.14rem;
+    font-size: 1.55rem;
     font-weight: 800;
+    line-height: 1;
 }
 
 .text-eta {
     color: #4f46e5;
-    font-size: 1.14rem;
+    font-size: 1.55rem;
     font-weight: 800;
+    line-height: 1;
 }
 
 .text-speed {
     color: #d97706;
-    font-size: 1.14rem;
+    font-size: 1.55rem;
     font-weight: 800;
+    line-height: 1;
 }
 
 /* ── Analog Clock with Continuous Spinning Hands (NOT an hourglass/sand watch) ── */
@@ -216,16 +218,16 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 26px;
+    height: 26px;
     flex-shrink: 0;
     line-height: 1;
 }
 
 .analog-clock-svg {
     display: block;
-    width: 20px;
-    height: 20px;
+    width: 26px;
+    height: 26px;
     overflow: visible;
 }
 
