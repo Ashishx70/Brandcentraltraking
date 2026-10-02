@@ -641,7 +641,17 @@ class XpressBeesScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] Xpressbees error: {fe}")
-                return f"/static/screenshots/{screenshot_filename}"
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception as de:
+                    print(f"[Xpressbees] Drive upload note: {de}")
+                    return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_xb:
                 print(f"[Xpressbees] Official screenshot error: {e_xb}, falling back to TrackCourier...")
                 # 2. Fast reliable fallback
@@ -659,7 +669,17 @@ class XpressBeesScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-                return f"/static/screenshots/{screenshot_filename}"
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Xpressbees",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception as de:
+                    print(f"[Xpressbees] Drive fallback upload note: {de}")
+                    return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Xpressbees] Screenshot capture failed for {clean_awb}: {e}")
             return "-"
@@ -669,9 +689,4 @@ class XpressBeesScraper(BaseScraper):
                     await page.close()
                 except Exception:
                     pass
-            try:
-                from browser.playwright_manager import playwright_manager
-                await playwright_manager.close_browser()
-            except Exception:
-                pass
 

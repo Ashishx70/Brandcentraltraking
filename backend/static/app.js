@@ -23,10 +23,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const filterStatus = document.getElementById('filter-status');
     const tableBody = document.getElementById('table-body');
     
-    // Download Images & Sync Selected Elements
+    // Download Images, Sync Selected & Sync Awaiting Elements
     const downloadImagesBtn = document.getElementById('download-images-btn');
     const syncSelectedBtn = document.getElementById('sync-selected-btn');
     const selectedCountSpan = document.getElementById('selected-count');
+    const syncPendingBtn = document.getElementById('sync-pending-btn');
+    const pendingCountSpan = document.getElementById('pending-count');
     const selectAllCheckbox = document.getElementById('select-all-checkbox');
 
     // Bulk Tracking Mode Toggle Elements
@@ -212,12 +214,39 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     updateModeToggleUI();
 
+    function isShipmentAwaitingScan(s) {
+        if (!s) return false;
+        const status = (s.status || '').toLowerCase().trim();
+        const loc = (s.last_location || '').toLowerCase().trim();
+        const lastSync = (s.last_sync || '').trim();
+        
+        if (!lastSync || lastSync === '-' || lastSync === '') return true;
+        if (status === 'pending' || status === '') return true;
+        if (loc === 'awaiting scan' || loc === 'pending scan') return true;
+        return false;
+    }
+
+    function getUnsyncedOrAwaitingShipments() {
+        return (state.shipments || []).filter(s => isShipmentAwaitingScan(s));
+    }
+
     function updateSelectionUI() {
         if (!state.selectedAwbs) state.selectedAwbs = new Set();
         const count = state.selectedAwbs.size;
         if (selectedCountSpan) selectedCountSpan.textContent = count;
         if (syncSelectedBtn) {
             syncSelectedBtn.disabled = (count === 0 || state.isTracking);
+        }
+
+        // Update Sync Awaiting button & count
+        const awaitingList = getUnsyncedOrAwaitingShipments();
+        if (pendingCountSpan) pendingCountSpan.textContent = awaitingList.length;
+        if (syncPendingBtn) {
+            syncPendingBtn.disabled = (awaitingList.length === 0 || state.isTracking || !state.shipments || state.shipments.length === 0);
+        }
+
+        if (startTrackingBtn) {
+            startTrackingBtn.disabled = (!state.shipments || state.shipments.length === 0 || state.isTracking);
         }
 
         // Update header select-all checkbox
@@ -328,19 +357,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
                     updateStatsUI();
                     applyFilters(false);
+                    updateSelectionUI();
 
-                    if (state.isTracking && state.progress < 100) {
+                    const awaitingList = getUnsyncedOrAwaitingShipments();
+                    if (state.isTracking) {
                         progressPanel.style.visibility = 'visible';
                         progressBarFill.style.width = `${state.progress}%`;
                         progressPercent.textContent = `${state.progress}%`;
-                        progressText.textContent = saved.progressText || 'Resuming tracking...';
+                        progressText.textContent = saved.progressText || 'Reconnecting tracking session...';
                         startTrackingBtn.disabled = true;
                         pollProgress();
-                    } else if (state.progress >= 100) {
+                    } else if (awaitingList.length === 0 && state.shipments.length > 0) {
                         progressPanel.style.visibility = 'visible';
                         progressBarFill.style.width = `100%`;
                         progressPercent.textContent = `100%`;
                         progressText.textContent = 'Sync All Completed!';
+                    } else if (state.progress > 0) {
+                        progressPanel.style.visibility = 'visible';
+                        progressBarFill.style.width = `${state.progress}%`;
+                        progressPercent.textContent = `${state.progress}%`;
+                        progressText.textContent = `${state.shipments.length - awaitingList.length}/${state.shipments.length} synced. ${awaitingList.length} awaiting scan.`;
                     }
 
                     // Background restore to backend in case Render woke up from sleep
@@ -489,7 +525,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // "Sync All" button triggers bulk simulation run
     startTrackingBtn.addEventListener('click', async () => {
-        if (!state.taskId && state.shipments.length === 0) return;
+        if (!state.taskId && (!state.shipments || state.shipments.length === 0)) return;
         if (!state.taskId) {
             state.taskId = 'task_' + Date.now();
         }
@@ -497,6 +533,8 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             syncStartTime = Date.now();
             startTrackingBtn.disabled = true;
+            if (syncPendingBtn) syncPendingBtn.disabled = true;
+            if (syncSelectedBtn) syncSelectedBtn.disabled = true;
             progressPanel.style.visibility = 'visible';
             state.isTracking = true;
             state.progress = 0;
@@ -532,6 +570,64 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    // "Sync Awaiting" button triggers tracking ONLY for shipments awaiting scan or pending
+    if (syncPendingBtn) {
+        syncPendingBtn.addEventListener('click', async () => {
+            const awaitingList = getUnsyncedOrAwaitingShipments();
+            if (awaitingList.length === 0) {
+                alert('All shipments have already been scanned and synced!');
+                return;
+            }
+            if (state.isTracking) return;
+
+            const targetAwbs = awaitingList.map(s => s.tracking_number);
+            if (!state.taskId) {
+                state.taskId = 'task_' + Date.now();
+            }
+
+            try {
+                syncStartTime = Date.now();
+                state.isTracking = true;
+                syncPendingBtn.disabled = true;
+                if (syncSelectedBtn) syncSelectedBtn.disabled = true;
+                startTrackingBtn.disabled = true;
+                progressPanel.style.visibility = 'visible';
+                state.progress = 0;
+                progressBarFill.style.width = '0%';
+                progressPercent.textContent = '0%';
+                progressText.textContent = `Starting sync for ${targetAwbs.length} awaiting scan shipments...`;
+                saveSessionState();
+                renderCurrentPage();
+
+                const startRes = await fetch('/api/track/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        task_id: state.taskId,
+                        shipments: state.shipments,
+                        capture_screenshot: !!state.captureScreenshot,
+                        selected_tracking_numbers: targetAwbs
+                    })
+                });
+
+                if (!startRes.ok) {
+                    const errData = await startRes.json().catch(() => ({}));
+                    throw new Error(errData.detail || 'Failed to start sync for awaiting shipments');
+                }
+
+                pollProgress();
+
+            } catch (error) {
+                alert(`Error syncing awaiting shipments: ${error.message}`);
+                syncPendingBtn.disabled = false;
+                startTrackingBtn.disabled = false;
+                state.isTracking = false;
+                updateSelectionUI();
+                saveSessionState();
+            }
+        });
+    }
+
     // "Sync Selected" button triggers tracking ONLY for selected shipments
     if (syncSelectedBtn) {
         syncSelectedBtn.addEventListener('click', async () => {
@@ -550,6 +646,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncStartTime = Date.now();
                 state.isTracking = true;
                 syncSelectedBtn.disabled = true;
+                if (syncPendingBtn) syncPendingBtn.disabled = true;
                 startTrackingBtn.disabled = true;
                 progressPanel.style.visibility = 'visible';
                 state.progress = 0;
@@ -753,10 +850,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Update Table and Stats without resetting active page
             applyFilters(false);
             recalculateStats();
+            updateSelectionUI();
             saveSessionState();
 
-            if (data.status === 'completed' || progress >= 100) {
+            if (data.status === 'completed') {
                 state.isTracking = false;
+                progressBarFill.style.width = '100%';
+                progressPercent.textContent = '100%';
                 progressText.textContent = 'Sync Completed!';
                 startTrackingBtn.disabled = false;
                 if (state.selectedAwbs) state.selectedAwbs.clear();
@@ -768,6 +868,12 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (data.status === 'failed') {
                 state.isTracking = false;
                 progressText.textContent = 'Sync Failed.';
+                startTrackingBtn.disabled = false;
+                updateSelectionUI();
+                saveSessionState();
+            } else if (data.status === 'idle') {
+                // Task is idle (e.g. restored from session or paused)
+                state.isTracking = false;
                 startTrackingBtn.disabled = false;
                 updateSelectionUI();
                 saveSessionState();
@@ -1303,7 +1409,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
             // Determine screenshot column markup
             const hasScreenshot = item.screenshot && item.screenshot !== '-';
-            const screenshotUrl = hasScreenshot ? `${item.screenshot.split('?')[0]}?t=${Date.now()}` : '';
+            const screenshotUrl = hasScreenshot ? (item.screenshot.startsWith('http') ? item.screenshot : `${item.screenshot.split('?')[0]}?t=${Date.now()}`) : '';
             const screenshotHtml = hasScreenshot ? 
                 `<a href="${screenshotUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>` : 
                 `<span class="gallery-icon-link no-screenshot" title="No screenshot captured (Fast Track)"><img src="/static/gallery_icon_red.png?v=3.4.0" alt="No Screenshot"></span>`;
@@ -1568,9 +1674,15 @@ document.addEventListener('DOMContentLoaded', () => {
             
             const hasScreenshot = data.screenshot && data.screenshot !== '-';
             if (hasScreenshot) {
-                const freshUrl = `${data.screenshot.split('?')[0]}?t=${Date.now()}`;
+                const isHttp = data.screenshot.startsWith('http');
+                const freshUrl = isHttp ? data.screenshot : `${data.screenshot.split('?')[0]}?t=${Date.now()}`;
                 resScreenshot.innerHTML = `<a href="${freshUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>`;
-                previewImg.src = freshUrl;
+                if (isHttp && data.screenshot.includes('/file/d/')) {
+                    const fileId = data.screenshot.split('/file/d/')[1].split('/')[0];
+                    previewImg.src = `https://lh3.googleusercontent.com/d/${fileId}`;
+                } else {
+                    previewImg.src = freshUrl;
+                }
                 previewRow.style.display = 'flex';
             } else {
                 resScreenshot.innerHTML = `<span class="gallery-icon-link no-screenshot" title="No screenshot captured (Fast Track)"><img src="/static/gallery_icon_red.png?v=3.4.0" alt="No Screenshot"></span>`;

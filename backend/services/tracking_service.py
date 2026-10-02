@@ -129,9 +129,44 @@ class TrackingService:
                 else:
                     await asyncio.sleep(0.2)
 
-        # Launch all tasks controlled by the semaphore
-        tasks = [asyncio.create_task(track_single(s)) for s in shipments]
-        await asyncio.gather(*tasks)
+        # Concurrency & Chunking:
+        # In Image Mode: Process in batches of 25. After each 25 AWBs, terminate Chrome and clean RAM (gc.collect)
+        # to ensure Render 512MB memory limit is never crossed. Next 25 will start with a fresh Chrome.
+        # In Data Mode: Process all shipments directly via 3 parallel workers.
+        if capture_screenshot:
+            chunk_size = 25
+            total_chunks = (total + chunk_size - 1) // chunk_size
+            for chunk_idx in range(total_chunks):
+                start_i = chunk_idx * chunk_size
+                end_i = min(start_i + chunk_size, total)
+                chunk = shipments[start_i:end_i]
+                print(f"\n[IMAGE MODE] >>> Starting Batch {chunk_idx + 1}/{total_chunks} (AWBs {start_i + 1} to {end_i})...")
+                tasks = [asyncio.create_task(track_single(s)) for s in chunk]
+                await asyncio.gather(*tasks)
+
+                # Terminate Chrome browser process & force garbage collection after each 25 AWBs
+                print(f"[IMAGE MODE] <<< Batch {chunk_idx + 1}/{total_chunks} finished. Closing Chrome & releasing memory...")
+                try:
+                    from browser.playwright_manager import playwright_manager
+                    await playwright_manager.close_browser()
+                except Exception as b_err:
+                    print(f"[TrackingService] Browser cleanup note: {b_err}")
+
+                import gc
+                gc.collect()
+                if chunk_idx + 1 < total_chunks:
+                    print(f"[IMAGE MODE] Clean slate ready. Fresh Chrome will launch for Batch {chunk_idx + 2}/{total_chunks}.\n")
+        else:
+            tasks = [asyncio.create_task(track_single(s)) for s in shipments]
+            await asyncio.gather(*tasks)
+
+        # Final safety cleanup for any open browser
+        if capture_screenshot:
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
 
         elapsed_time = time.time() - start_time
         mins = int(elapsed_time // 60)

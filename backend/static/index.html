@@ -112,6 +112,9 @@
                     <button class="btn btn-primary" id="start-tracking-btn" disabled>
                         <i data-lucide="play"></i> Sync All
                     </button>
+                    <button class="btn btn-purple" id="sync-pending-btn" disabled title="Sync only unsynced or awaiting scan shipments">
+                        <i data-lucide="refresh-cw"></i> Sync Awaiting (<span id="pending-count">0</span>)
+                    </button>
                     <button class="btn btn-warning" id="sync-selected-btn" disabled title="Sync only the selected shipments"><i data-lucide="check-square"></i> Sync Selected (<span id="selected-count">0</span>)</button>
                     <button class="btn btn-success" id="export-btn" disabled>
                         <i data-lucide="file-spreadsheet"></i> Export Excel

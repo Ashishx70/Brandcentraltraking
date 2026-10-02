@@ -187,7 +187,17 @@ class ShadowfaxScraper(BaseScraper):
                     )
                 except Exception as fe:
                     print(f"[DesktopFrame] Shadowfax error: {fe}")
-                return f"/static/screenshots/{screenshot_filename}"
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Shadowfax",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception as de:
+                    print(f"[Shadowfax] Drive upload note: {de}")
+                    return f"/static/screenshots/{screenshot_filename}"
             except Exception as e_sf:
                 print(f"[Shadowfax] Official tracker screenshot error: {e_sf}, falling back to TrackCourier...")
                 # 2. Fast reliable fallback
@@ -205,7 +215,17 @@ class ShadowfaxScraper(BaseScraper):
                     )
                 except Exception:
                     pass
-                return f"/static/screenshots/{screenshot_filename}"
+                try:
+                    from services.drive_service import DriveService
+                    return await DriveService.upload_and_cleanup(
+                        image_path=screenshot_file,
+                        courier_name="Shadowfax",
+                        clean_awb=clean_awb,
+                        fallback_relative_path=f"/static/screenshots/{screenshot_filename}"
+                    )
+                except Exception as de:
+                    print(f"[Shadowfax] Drive fallback upload note: {de}")
+                    return f"/static/screenshots/{screenshot_filename}"
         except Exception as e:
             print(f"[Shadowfax] Screenshot capture failed for {clean_awb}: {e}")
             return "-"
@@ -215,11 +235,6 @@ class ShadowfaxScraper(BaseScraper):
                     await page.close()
                 except Exception:
                     pass
-            try:
-                from browser.playwright_manager import playwright_manager
-                await playwright_manager.close_browser()
-            except Exception:
-                pass
 
     async def track(self, awb: str, capture_screenshot: bool = False) -> dict:
         clean_awb = str(awb).strip()

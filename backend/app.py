@@ -176,6 +176,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("PRAGMA foreign_keys = ON;")
     cursor = conn.cursor()
     # Create tasks table
@@ -538,7 +540,7 @@ async def upload_file(file: UploadFile = File(...)):
 # Real background task runner calling TrackingService
 async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False, selected_tracking_numbers: Optional[List[str]] = None):
     # Retrieve shipments from database
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     cursor = conn.cursor()
     cursor.execute("SELECT tracking_number, courier, status, last_location, timestamp, last_sync, screenshot, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, platform_status FROM shipments WHERE task_id = ?", (task_id,))
     rows = cursor.fetchall()
@@ -568,23 +570,33 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
         })
 
     if selected_tracking_numbers:
-        selected_set = set(selected_tracking_numbers)
-        shipments_to_track = [s for s in shipments if s["tracking_number"] in selected_set]
+        selected_set = {str(x).strip().upper() for x in selected_tracking_numbers if str(x).strip()}
+        shipments_to_track = [s for s in shipments if str(s["tracking_number"]).strip().upper() in selected_set]
+        if not shipments_to_track:
+            raw_set = {str(x).strip() for x in selected_tracking_numbers if str(x).strip()}
+            shipments_to_track = [s for s in shipments if str(s["tracking_number"]).strip() in raw_set]
         if not shipments_to_track:
             shipments_to_track = shipments
     else:
         shipments_to_track = shipments
+
+    if not shipments_to_track:
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
+        conn.execute("UPDATE tasks SET status = ?, progress = 100, current_action = ? WHERE task_id = ?", ("completed", "No shipments to process", task_id))
+        conn.commit()
+        conn.close()
+        return
         
-    # Set status to running
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", ("running", task_id))
+    # Explicitly set status to running and progress to 0 for this tracking session
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
+    conn.execute("UPDATE tasks SET status = ?, progress = 0, current_action = ? WHERE task_id = ?", ("running", f"Tracking {len(shipments_to_track)} shipments...", task_id))
     conn.commit()
     conn.close()
     
     # We define progress callback to update SQLite task
     async def progress_callback(progress, current_action, log_message, log_level, shipment=None):
         try:
-            conn = sqlite3.connect(DB_PATH, timeout=20.0)
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
             cursor = conn.cursor()
             cursor.execute("UPDATE tasks SET progress = ?, current_action = ? WHERE task_id = ?", (progress, current_action, task_id))
             
@@ -611,16 +623,16 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
 
     try:
         await TrackingService.track_shipments(shipments_to_track, task_id, progress_callback, capture_screenshot=capture_screenshot)
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute("UPDATE tasks SET status = ? WHERE task_id = ?", ("completed", task_id))
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
+        conn.execute("UPDATE tasks SET status = ?, progress = 100, current_action = ? WHERE task_id = ?", ("completed", "Tracking completed successfully", task_id))
         conn.commit()
         conn.close()
     except Exception as e:
         import traceback
         traceback.print_exc()
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         cursor = conn.cursor()
-        cursor.execute("UPDATE tasks SET status = ? WHERE task_id = ?", ("failed", task_id))
+        cursor.execute("UPDATE tasks SET status = ?, progress = 100, current_action = ? WHERE task_id = ?", ("failed", f"Failed: {str(e)}", task_id))
         cursor.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, f"Fatal tracking engine error: {str(e)}", "error"))
         conn.commit()
         conn.close()
@@ -673,6 +685,13 @@ async def query_single_shipment(body: QuerySingleRequest):
         timestamp = "-"
         screenshot = "-"
         events = []
+    finally:
+        if capture_screenshot:
+            try:
+                from browser.playwright_manager import playwright_manager
+                await playwright_manager.close_browser()
+            except Exception:
+                pass
         
     # API calls tracking
     conn = sqlite3.connect(DB_PATH)
@@ -701,20 +720,23 @@ async def query_single_shipment(body: QuerySingleRequest):
 async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTasks):
     task_id = body.task_id
     capture_screenshot = body.capture_screenshot or False
-    
-    conn = sqlite3.connect(DB_PATH)
+    selected_tracking_numbers = body.selected_tracking_numbers or None
+
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     cursor = conn.cursor()
     cursor.execute("SELECT 1 FROM tasks WHERE task_id = ?", (task_id,))
     exists = cursor.fetchone()
-    
-    # Self-healing: If task doesn't exist in DB (e.g. server woke up or restarted), re-create it if shipments are sent
-    if not exists:
-        if body.shipments:
-            cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "pending", 0, "Ready to start"))
-            for s in body.shipments:
+
+    # Synchronize shipments into DB if body.shipments provided
+    if body.shipments:
+        cursor.execute("SELECT tracking_number FROM shipments WHERE task_id = ?", (task_id,))
+        existing_awbs = set(r[0] for r in cursor.fetchall())
+        for s in body.shipments:
+            awb = s.get("tracking_number")
+            if awb and awb not in existing_awbs:
                 cursor.execute("""
-                INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     task_id,
                     s.get("channel", ""),
@@ -727,22 +749,38 @@ async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTa
                     s.get("order_id", ""),
                     s.get("item_sku", ""),
                     s.get("amt", ""),
-                    s["tracking_number"],
+                    awb,
                     s.get("courier", "Delhivery"),
                     s.get("platform_status", ""),
                     s.get("status", "Pending"),
                     s.get("last_location", "Awaiting scan"),
                     s.get("timestamp", "-"),
                     s.get("last_sync", "-"),
-                    s.get("screenshot", "-")
+                    s.get("screenshot", "-"),
+                    json.dumps(s.get("events", []))
                 ))
-            cursor.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, f"Restored {len(body.shipments)} records into task session.", "info"))
-            conn.commit()
-        else:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Task ID not found")
-            
-    selected_tracking_numbers = body.selected_tracking_numbers or None
+                existing_awbs.add(awb)
+    elif not exists:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Task ID not found")
+
+    num_to_track = len(selected_tracking_numbers) if selected_tracking_numbers else (len(body.shipments) if body.shipments else 0)
+    action_msg = f"Starting sync for {num_to_track} shipments..." if num_to_track > 0 else "Starting sync..."
+
+    cursor.execute("""
+    INSERT INTO tasks (task_id, status, progress, current_action)
+    VALUES (?, 'running', 0, ?)
+    ON CONFLICT(task_id) DO UPDATE SET
+        status = 'running',
+        progress = 0,
+        current_action = ?
+    """, (task_id, action_msg, action_msg))
+    
+    cursor.execute("DELETE FROM logs WHERE task_id = ?", (task_id,))
+    cursor.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, action_msg, "info"))
+    conn.commit()
+    conn.close()
+
     background_tasks.add_task(run_tracking_simulation, task_id, capture_screenshot, selected_tracking_numbers)
     return {"status": "started"}
 
@@ -780,10 +818,10 @@ async def sync_single_shipment(body: SyncSingleRequest):
         last_sync_str = datetime.now().strftime("%d-%m-%Y %I:%M:%S %p")
         
         # Self-healing: Ensure task and shipment exist in DB
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=30.0)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO api_usage DEFAULT VALUES;")
-        cursor.execute("INSERT OR IGNORE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "completed", 100, "Idle"))
+        cursor.execute("INSERT OR IGNORE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "idle", 0, "Idle"))
         
         events = result.get("events", [])
         events_json = json.dumps(events)
@@ -1188,16 +1226,32 @@ async def download_screenshots(body: DownloadScreenshotsRequest):
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         added_awbs = set()
         
-        # 1. From database records (exact registered screenshot path with courier name)
+        # 1. From database records (Google Drive URL or local path)
         for awb, courier, sc_path in target_screenshots:
             if awb in added_awbs:
                 continue
-            filename = os.path.basename(sc_path)
-            disk_path = os.path.join(SCREENSHOTS_DIR, filename)
-            if os.path.exists(disk_path):
-                zip_file.write(disk_path, arcname=filename)
-                added_awbs.add(awb)
-                found_count += 1
+            if str(sc_path).startswith("http"):
+                try:
+                    if "/file/d/" in str(sc_path):
+                        file_id = str(sc_path).split("/file/d/")[1].split("/")[0]
+                        cdn_url = f"https://lh3.googleusercontent.com/d/{file_id}"
+                        import urllib.request
+                        req = urllib.request.Request(cdn_url, headers={"User-Agent": "Mozilla/5.0"})
+                        with urllib.request.urlopen(req, timeout=12) as resp:
+                            img_bytes = resp.read()
+                            zip_filename = f"{awb}_{courier}.jpg"
+                            zip_file.writestr(zip_filename, img_bytes)
+                            added_awbs.add(awb)
+                            found_count += 1
+                except Exception as dl_err:
+                    print(f"[DownloadScreenshots] Error downloading {awb} from Drive: {dl_err}")
+            else:
+                filename = os.path.basename(sc_path)
+                disk_path = os.path.join(SCREENSHOTS_DIR, filename)
+                if os.path.exists(disk_path):
+                    zip_file.write(disk_path, arcname=filename)
+                    added_awbs.add(awb)
+                    found_count += 1
                 
         # 2. Disk fallback: Only select files with courier name ({awb}_{courier}.png)
         all_disk_files = [f for f in os.listdir(SCREENSHOTS_DIR) if f.lower().endswith(('.png', '.jpg', '.jpeg', '.webp'))]
@@ -1235,14 +1289,30 @@ async def download_screenshots(body: DownloadScreenshotsRequest):
 @app.post('/api/restore_task')
 async def restore_task(body: RestoreTaskRequest):
     """Restore task and shipments into SQLite database from client session storage."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (body.task_id, "completed", 100, "Restored from session"))
+    
+    # Check if task already exists and is actively running
+    cursor.execute("SELECT status, progress FROM tasks WHERE task_id = ?", (body.task_id,))
+    existing_task = cursor.fetchone()
+    if existing_task and existing_task[0] == "running":
+        conn.close()
+        return {"status": "already_running", "count": len(body.shipments)}
+
+    # Calculate actual status and progress based on shipments
+    total = len(body.shipments)
+    pending_count = sum(1 for s in body.shipments if s.get("status", "").lower() in ["pending", ""] or s.get("last_location", "") in ["Awaiting scan", "Pending scan"] or not s.get("last_sync") or s.get("last_sync") == "-")
+    completed_count = total - pending_count
+    actual_progress = int((completed_count / total) * 100) if total > 0 else 0
+    task_status = "completed" if (pending_count == 0 and total > 0) else "idle"
+    action_text = "All shipments synced" if task_status == "completed" else f"{completed_count}/{total} synced, {pending_count} awaiting scan"
+
+    cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (body.task_id, task_status, actual_progress, action_text))
     cursor.execute("DELETE FROM shipments WHERE task_id = ?", (body.task_id,))
     for s in body.shipments:
         cursor.execute("""
-        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             body.task_id,
             s.get("channel", ""),
@@ -1255,14 +1325,15 @@ async def restore_task(body: RestoreTaskRequest):
             s.get("order_id", ""),
             s.get("item_sku", ""),
             s.get("amt", ""),
-            s["tracking_number"],
+            s.get("tracking_number", ""),
             s.get("courier", "Delhivery"),
             s.get("platform_status", ""),
             s.get("status", "Pending"),
             s.get("last_location", "Awaiting scan"),
             s.get("timestamp", "-"),
             s.get("last_sync", "-"),
-            s.get("screenshot", "-")
+            s.get("screenshot", "-"),
+            json.dumps(s.get("events", []))
         ))
     conn.commit()
     conn.close()
