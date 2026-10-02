@@ -72,11 +72,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalSyncHits = document.getElementById('modal-sync-hits');
     let syncStartTime = null;
 
-    // ETA Elements
-    const etaRow   = document.getElementById('progress-eta-row');
-    const etaCount = document.getElementById('eta-count');
-    const etaTime  = document.getElementById('eta-time');
-    const etaSpeed = document.getElementById('eta-speed');
+    // ETA Elements in Header Stats Bar (Pehle wali patti)
+    const headerEtaGroup   = document.getElementById('header-eta-group');
+    const headerEtaDivider = document.getElementById('header-eta-divider');
+    const etaCount         = document.getElementById('eta-count');
+    const etaTime          = document.getElementById('eta-time');
+    const etaSpeed         = document.getElementById('eta-speed');
 
     // Timeline Modal Elements
     const timelineModal = document.getElementById('timeline-modal');
@@ -853,7 +854,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function updateETA(shipments) {
         if (!state.isTracking || !syncStartTime) {
-            if (etaRow) etaRow.style.display = 'none';
+            if (headerEtaGroup) headerEtaGroup.style.display = 'none';
+            if (headerEtaDivider) headerEtaDivider.style.display = 'none';
             return;
         }
 
@@ -862,35 +864,42 @@ document.addEventListener('DOMContentLoaded', () => {
             s.last_sync && s.last_sync !== '-' && s.last_sync !== ''
         ).length;
 
-        if (total === 0) { if (etaRow) etaRow.style.display = 'none'; return; }
+        if (total === 0) {
+            if (headerEtaGroup) headerEtaGroup.style.display = 'none';
+            if (headerEtaDivider) headerEtaDivider.style.display = 'none';
+            return;
+        }
 
-        if (etaRow) etaRow.style.display = 'flex';
+        if (headerEtaGroup) headerEtaGroup.style.display = 'flex';
+        if (headerEtaDivider) headerEtaDivider.style.display = 'block';
 
         const elapsedSec = (Date.now() - syncStartTime) / 1000;
         const avgPerItem = completed > 0 ? elapsedSec / completed : null;
         const remaining  = total - completed;
         const etaSec     = avgPerItem ? avgPerItem * remaining : null;
 
-        // Count display
-        if (etaCount) etaCount.innerHTML = `⚙️ <strong>${completed}</strong> / ${total} synced`;
+        // Count display (Clean number format, no emojis)
+        if (etaCount) {
+            etaCount.textContent = `${completed} / ${total}`;
+        }
 
-        // Time display
+        // Time display (Clean text, no emojis)
         if (etaTime) {
             if (completed < 3) {
-                etaTime.innerHTML = `⏱ <strong>Calculating...</strong>`;
+                etaTime.textContent = 'Calculating...';
             } else if (etaSec !== null) {
-                etaTime.innerHTML = `⏱ Est. remaining: <strong>${formatDuration(etaSec)}</strong>`;
+                etaTime.textContent = formatDuration(etaSec);
             } else {
-                etaTime.innerHTML = `⏱ <strong>—</strong>`;
+                etaTime.textContent = '—';
             }
         }
 
-        // Speed display
+        // Speed display (Clean text, no emojis)
         if (etaSpeed) {
             if (avgPerItem !== null && completed >= 3) {
-                etaSpeed.innerHTML = `⚡ <strong>${avgPerItem.toFixed(1)}s</strong>/item`;
+                etaSpeed.textContent = `${avgPerItem.toFixed(1)}s/item`;
             } else {
-                etaSpeed.innerHTML = `⚡ <strong>—</strong>`;
+                etaSpeed.textContent = '—';
             }
         }
     }
@@ -964,7 +973,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressPercent.textContent = '100%';
                 progressText.textContent = 'Sync Completed!';
                 startTrackingBtn.disabled = false;
-                if (etaRow) etaRow.style.display = 'none';
+                if (headerEtaGroup) headerEtaGroup.style.display = 'none';
+                if (headerEtaDivider) headerEtaDivider.style.display = 'none';
                 syncStartTime = null;
                 if (state.selectedAwbs) state.selectedAwbs.clear();
                 applyFilters(false);
@@ -982,7 +992,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.activeSyncMode = 'all';
                 progressText.textContent = 'Sync Failed.';
                 startTrackingBtn.disabled = false;
-                if (etaRow) etaRow.style.display = 'none';
+                if (headerEtaGroup) headerEtaGroup.style.display = 'none';
+                if (headerEtaDivider) headerEtaDivider.style.display = 'none';
                 syncStartTime = null;
                 applyFilters(false);
                 updateSelectionUI();
@@ -993,7 +1004,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.activeSelectedAwbs = null;
                 state.activeSyncMode = 'all';
                 startTrackingBtn.disabled = false;
-                if (etaRow) etaRow.style.display = 'none';
+                if (headerEtaGroup) headerEtaGroup.style.display = 'none';
+                if (headerEtaDivider) headerEtaDivider.style.display = 'none';
                 syncStartTime = null;
                 updateSelectionUI();
                 saveSessionState(true);
