@@ -262,6 +262,51 @@ body {
     animation: clockHourHandSpin 18s linear infinite;
 }
 
+/* ── Live Sync Icon Continuous Rotation ── */
+@keyframes syncRotateLoop {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.header-sync-spin {
+    animation: syncRotateLoop 2s linear infinite;
+    transform-origin: center;
+}
+
+/* ── Live Speed Lightning Energy Pulse ── */
+@keyframes zapEnergeticPulse {
+    0%, 100% {
+        transform: scale(1) rotate(0deg);
+        filter: drop-shadow(0 0 0 rgba(245, 158, 11, 0));
+        opacity: 0.95;
+    }
+    25% {
+        transform: scale(1.15) rotate(-3deg);
+        filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.8));
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.04) rotate(1deg);
+        filter: drop-shadow(0 0 2px rgba(245, 158, 11, 0.4));
+        opacity: 0.9;
+    }
+    75% {
+        transform: scale(1.18) rotate(-2deg);
+        filter: drop-shadow(0 0 5px rgba(245, 158, 11, 0.85));
+        opacity: 1;
+    }
+}
+
+.header-zap-pulse {
+    animation: zapEnergeticPulse 1.8s ease-in-out infinite;
+    transform-origin: center;
+    overflow: visible;
+}
+
 .header-actions {
     display: flex;
     align-items: center;
