@@ -1284,22 +1284,45 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ── Render page number pills with smart ellipsis ──────────────────────
+    // Pattern: 1 2 3 4 5 … 39   (near start)
+    //          1 … 4 5 6 7 8 … 39  (middle)
+    //          1 … 35 36 37 38 39  (near end)
     function renderPagePills(currentPage, totalPages) {
         pagePillsEl.innerHTML = '';
         if (totalPages <= 1) return;
 
-        // Build list of page numbers to show (with null = ellipsis)
+        const WINDOW = 2;      // pages either side of current
+        const EDGE   = 5;      // how many pages to show at start/end before ellipsis
+
+        // Build the full set of page numbers to render (null = ellipsis)
         const pages = [];
-        const delta = 2; // pages either side of current
-        const left  = Math.max(2, currentPage - delta);
-        const right = Math.min(totalPages - 1, currentPage + delta);
+        const addPage = (n) => { if (pages[pages.length - 1] !== n) pages.push(n); };
+        const addDot  = ()  => { if (pages[pages.length - 1] !== null) pages.push(null); };
 
-        pages.push(1);
-        if (left > 2) pages.push(null);          // ellipsis before
-        for (let i = left; i <= right; i++) pages.push(i);
-        if (right < totalPages - 1) pages.push(null); // ellipsis after
-        if (totalPages > 1) pages.push(totalPages);
+        // Always include page 1
+        addPage(1);
 
+        const rangeStart = Math.max(2, currentPage - WINDOW);
+        const rangeEnd   = Math.min(totalPages - 1, currentPage + WINDOW);
+
+        // Near the start: show first EDGE pages flat, then ellipsis
+        if (rangeStart <= EDGE) {
+            for (let i = 2; i <= Math.min(EDGE, totalPages - 1); i++) addPage(i);
+            if (rangeEnd > EDGE) {
+                for (let i = EDGE + 1; i <= rangeEnd; i++) addPage(i);
+            }
+        } else {
+            addDot();
+            for (let i = rangeStart; i <= rangeEnd; i++) addPage(i);
+        }
+
+        // Ellipsis before last page if gap exists
+        if (rangeEnd < totalPages - 1) addDot();
+
+        // Always include last page
+        if (totalPages > 1) addPage(totalPages);
+
+        // Render
         pages.forEach(p => {
             if (p === null) {
                 const span = document.createElement('span');

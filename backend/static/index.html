@@ -338,18 +338,23 @@
 
                 <!-- Pagination Container -->
                 <div class="pagination-container">
-                    <div class="pagination-left">
+                    <!-- Left: Go to page -->
+                    <div class="pagination-go-to">
+                        <span>Go to:</span>
+                        <input type="number" id="goto-page-input" min="1" value="1">
+                        <button class="btn-go" id="goto-page-btn">Go</button>
+                    </div>
+
+                    <!-- Center: nav arrows + numbered pills -->
+                    <div class="pagination-center">
                         <button class="btn-page-nav" id="first-page-btn" title="First Page">«</button>
                         <button class="btn-page-nav" id="prev-page-btn" title="Previous Page" disabled>‹</button>
                         <div class="page-pills" id="page-pills"></div>
                         <button class="btn-page-nav" id="next-page-btn" title="Next Page" disabled>›</button>
                         <button class="btn-page-nav" id="last-page-btn" title="Last Page">»</button>
-                        <div class="pagination-go-to">
-                            <span>Go to:</span>
-                            <input type="number" id="goto-page-input" min="1" value="1">
-                            <button class="btn-go" id="goto-page-btn">Go</button>
-                        </div>
                     </div>
+
+                    <!-- Right: Show N entries -->
                     <div class="pagination-right">
                         <span>Show</span>
                         <select id="rows-per-page-select" class="rows-per-page-select">

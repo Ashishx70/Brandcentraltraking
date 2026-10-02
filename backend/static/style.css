@@ -999,13 +999,18 @@ input:checked + .slider:before {
     padding-top: 16px;
     border-top: 1px solid var(--card-border);
     flex-wrap: wrap;
+    position: relative;
 }
 
-.pagination-left {
+/* Center zone — absolutely centred so pills are always in the middle */
+.pagination-center {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
+    gap: 4px;
+    pointer-events: auto;
 }
 
 .pagination-right {
@@ -1098,7 +1103,6 @@ input:checked + .slider:before {
     gap: 6px;
     font-size: 0.82rem;
     color: var(--text-color);
-    margin-left: 8px;
 }
 .pagination-go-to input {
     width: 52px;
