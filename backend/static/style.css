@@ -347,6 +347,31 @@ body {
     transition: width 0.3s ease;
 }
 
+/* ETA row below the progress bar */
+.progress-eta-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 2px;
+    flex-wrap: wrap;
+}
+.eta-item {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.eta-item strong {
+    color: var(--accent-primary);
+    font-weight: 700;
+}
+.eta-divider {
+    font-size: 0.7rem;
+    color: #cbd5e1;
+    user-select: none;
+}
+
+
 .buttons-group {
     display: flex;
     align-items: center;

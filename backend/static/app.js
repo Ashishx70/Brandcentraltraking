@@ -72,6 +72,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalSyncHits = document.getElementById('modal-sync-hits');
     let syncStartTime = null;
 
+    // ETA Elements
+    const etaRow   = document.getElementById('progress-eta-row');
+    const etaCount = document.getElementById('eta-count');
+    const etaTime  = document.getElementById('eta-time');
+    const etaSpeed = document.getElementById('eta-speed');
+
     // Timeline Modal Elements
     const timelineModal = document.getElementById('timeline-modal');
     const timelineModalCloseX = document.getElementById('timeline-modal-close-x');
@@ -834,6 +840,61 @@ document.addEventListener('DOMContentLoaded', () => {
         resetUploadSection();
     });
 
+    // ── ETA helper ────────────────────────────────────────────────────────
+    function formatDuration(seconds) {
+        if (!isFinite(seconds) || seconds < 0) return '—';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = Math.floor(seconds % 60);
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
+    function updateETA(shipments) {
+        if (!state.isTracking || !syncStartTime) {
+            if (etaRow) etaRow.style.display = 'none';
+            return;
+        }
+
+        const total     = shipments.length;
+        const completed = shipments.filter(s =>
+            s.last_sync && s.last_sync !== '-' && s.last_sync !== ''
+        ).length;
+
+        if (total === 0) { if (etaRow) etaRow.style.display = 'none'; return; }
+
+        if (etaRow) etaRow.style.display = 'flex';
+
+        const elapsedSec = (Date.now() - syncStartTime) / 1000;
+        const avgPerItem = completed > 0 ? elapsedSec / completed : null;
+        const remaining  = total - completed;
+        const etaSec     = avgPerItem ? avgPerItem * remaining : null;
+
+        // Count display
+        if (etaCount) etaCount.innerHTML = `⚙️ <strong>${completed}</strong> / ${total} synced`;
+
+        // Time display
+        if (etaTime) {
+            if (completed < 3) {
+                etaTime.innerHTML = `⏱ <strong>Calculating...</strong>`;
+            } else if (etaSec !== null) {
+                etaTime.innerHTML = `⏱ Est. remaining: <strong>${formatDuration(etaSec)}</strong>`;
+            } else {
+                etaTime.innerHTML = `⏱ <strong>—</strong>`;
+            }
+        }
+
+        // Speed display
+        if (etaSpeed) {
+            if (avgPerItem !== null && completed >= 3) {
+                etaSpeed.innerHTML = `⚡ <strong>${avgPerItem.toFixed(1)}s</strong>/item`;
+            } else {
+                etaSpeed.innerHTML = `⚡ <strong>—</strong>`;
+            }
+        }
+    }
+
     async function pollProgress() {
         if (!state.isTracking) return;
 
@@ -894,6 +955,7 @@ document.addEventListener('DOMContentLoaded', () => {
             updateStatsUI();
             updateTableInPlace(state.shipments);
             updateSelectionUI();
+            updateETA(state.shipments);   // ← ETA update
             saveSessionState(false);
 
             if (data.status === 'completed') {
@@ -902,6 +964,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressPercent.textContent = '100%';
                 progressText.textContent = 'Sync Completed!';
                 startTrackingBtn.disabled = false;
+                if (etaRow) etaRow.style.display = 'none';
+                syncStartTime = null;
                 if (state.selectedAwbs) state.selectedAwbs.clear();
                 applyFilters(false);
                 recalculateStats();
@@ -918,6 +982,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.activeSyncMode = 'all';
                 progressText.textContent = 'Sync Failed.';
                 startTrackingBtn.disabled = false;
+                if (etaRow) etaRow.style.display = 'none';
+                syncStartTime = null;
                 applyFilters(false);
                 updateSelectionUI();
                 saveSessionState(true);
@@ -927,6 +993,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.activeSelectedAwbs = null;
                 state.activeSyncMode = 'all';
                 startTrackingBtn.disabled = false;
+                if (etaRow) etaRow.style.display = 'none';
+                syncStartTime = null;
                 updateSelectionUI();
                 saveSessionState(true);
             } else {
