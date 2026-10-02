@@ -76,9 +76,15 @@ class PlaywrightManager:
                                 )
                         else:
                             # Headless Linux / Live Cloud Server (Render, Docker, VPS without monitor)
+                            cloud_args = launch_args + [
+                                '--disable-gpu',
+                                '--disable-software-rasterizer',
+                                '--no-zygote',
+                                '--js-flags=--max-old-space-size=256'
+                            ]
                             self._browser = await self._playwright.chromium.launch(
                                 headless=True,
-                                args=launch_args
+                                args=cloud_args
                             )
                     
                     ctx_kwargs = dict(kwargs)

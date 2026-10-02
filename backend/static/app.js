@@ -288,7 +288,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Session Storage State Persistence ---
-    function saveSessionState() {
+    let lastSessionSaveTime = 0;
+    function saveSessionState(force = false) {
+        const now = Date.now();
+        if (!force && state.isTracking && (now - lastSessionSaveTime < 8000)) {
+            return;
+        }
+        lastSessionSaveTime = now;
         try {
             const payload = {
                 taskId: state.taskId,
@@ -847,11 +853,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressText.textContent = data.current_action || 'Processing...';
             }
 
-            // Update Table and Stats without resetting active page
-            applyFilters(false);
-            recalculateStats();
+            // Fast in-place DOM update instead of destroying and recreating all table rows
+            updateStatsUI();
+            updateTableInPlace(state.shipments);
             updateSelectionUI();
-            saveSessionState();
+            saveSessionState(false);
 
             if (data.status === 'completed') {
                 state.isTracking = false;
@@ -860,8 +866,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressText.textContent = 'Sync Completed!';
                 startTrackingBtn.disabled = false;
                 if (state.selectedAwbs) state.selectedAwbs.clear();
+                applyFilters(false);
+                recalculateStats();
                 updateSelectionUI();
-                saveSessionState();
+                saveSessionState(true);
                 setTimeout(() => {
                     showSyncCompletedModal();
                 }, 350);
@@ -869,17 +877,18 @@ document.addEventListener('DOMContentLoaded', () => {
                 state.isTracking = false;
                 progressText.textContent = 'Sync Failed.';
                 startTrackingBtn.disabled = false;
+                applyFilters(false);
                 updateSelectionUI();
-                saveSessionState();
+                saveSessionState(true);
             } else if (data.status === 'idle') {
                 // Task is idle (e.g. restored from session or paused)
                 state.isTracking = false;
                 startTrackingBtn.disabled = false;
                 updateSelectionUI();
-                saveSessionState();
+                saveSessionState(true);
             } else {
-                // Poll again in 1.5 seconds
-                setTimeout(pollProgress, 1500);
+                // Poll again in 2.0 seconds (smooth & light on CPU)
+                setTimeout(pollProgress, 2000);
             }
 
         } catch (error) {
@@ -1364,6 +1373,98 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Helper UI Renderers ---
 
+    function updateTableInPlace(shipments) {
+        if (!tableBody) return;
+        const rows = tableBody.querySelectorAll('tr[data-awb]');
+        if (rows.length === 0) {
+            applyFilters(false);
+            return;
+        }
+
+        const shipmentsMap = new Map();
+        for (let i = 0; i < shipments.length; i++) {
+            shipmentsMap.set(shipments[i].tracking_number, shipments[i]);
+        }
+
+        let needsFullRender = false;
+
+        rows.forEach(tr => {
+            const awb = tr.getAttribute('data-awb');
+            const item = shipmentsMap.get(awb);
+            if (!item) {
+                needsFullRender = true;
+                return;
+            }
+
+            // 1. Status Badge
+            const statusCell = tr.querySelector('.status-cell-badge');
+            if (statusCell && statusCell.textContent !== item.status) {
+                const statusKey = item.status.toLowerCase().replace(/[\s_]+/g, '_');
+                let badgeClass = 'badge-pending';
+                if (statusKey === 'delivered') badgeClass = 'badge-delivered';
+                else if (statusKey.includes('transit') || statusKey.includes('picked') || statusKey.includes('out_for')) badgeClass = 'badge-transit';
+                else if (statusKey === 'exception' || statusKey.includes('fail') || statusKey.includes('error') || statusKey.includes('invalid') || statusKey.includes('not_found') || statusKey.includes('not found')) badgeClass = 'badge-exception';
+                
+                statusCell.className = `badge ${badgeClass} status-cell-badge`;
+                statusCell.textContent = item.status;
+            }
+
+            // 2. Location
+            const locCell = tr.querySelector('.location-badge');
+            const newLoc = item.last_location || 'Pending scan';
+            if (locCell && locCell.textContent !== newLoc) {
+                locCell.textContent = newLoc;
+            }
+
+            // 3. Timestamp
+            const timeCell = tr.querySelector('.timestamp-badge');
+            const isTimestampEmpty = !item.timestamp || item.timestamp === '-';
+            const printTimestamp = isTimestampEmpty ? '-' : item.timestamp;
+            if (timeCell && timeCell.textContent !== printTimestamp) {
+                timeCell.textContent = printTimestamp;
+                timeCell.className = `timestamp-badge ${isTimestampEmpty ? 'timestamp-empty' : 'timestamp-filled'}`;
+            }
+
+            // 4. Last Sync
+            const syncCell = tr.querySelector('.lastsync-badge');
+            const isLastSyncEmpty = !item.last_sync || item.last_sync === '-';
+            const printLastSync = isLastSyncEmpty ? '-' : item.last_sync;
+            if (syncCell && syncCell.textContent !== printLastSync) {
+                syncCell.textContent = printLastSync;
+                syncCell.className = `lastsync-badge ${isLastSyncEmpty ? 'lastsync-empty' : 'lastsync-filled'}`;
+            }
+
+            // 5. Screenshot
+            const scCell = tr.querySelector('.screenshot-cell');
+            if (scCell) {
+                const hasScreenshot = item.screenshot && item.screenshot !== '-';
+                const hasLink = scCell.querySelector('.has-screenshot');
+                if (hasScreenshot && !hasLink) {
+                    const screenshotUrl = item.screenshot.startsWith('http') ? item.screenshot : `${item.screenshot.split('?')[0]}?t=${Date.now()}`;
+                    scCell.innerHTML = `<a href="${screenshotUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>`;
+                }
+            }
+
+            // 6. Sync Button Spinner
+            const isSpinning = state.isTracking && item.status.toLowerCase() === 'pending';
+            const syncBtn = tr.querySelector('.btn-sync-single');
+            if (syncBtn) {
+                if (isSpinning && !syncBtn.disabled) {
+                    syncBtn.disabled = true;
+                    syncBtn.innerHTML = '<span class="duo-spinner table-duo-spinner"></span>';
+                } else if (!isSpinning && syncBtn.disabled) {
+                    syncBtn.disabled = false;
+                    syncBtn.innerHTML = '<i data-lucide="refresh-cw"></i>';
+                    lucide.createIcons({ root: syncBtn });
+                }
+            }
+        });
+
+        if (needsFullRender) {
+            applyFilters(false);
+        }
+    }
+
     function renderTable(dataList) {
         if (dataList.length === 0) {
             tableBody.innerHTML = `
@@ -1383,6 +1484,7 @@ document.addEventListener('DOMContentLoaded', () => {
         tableBody.innerHTML = '';
         dataList.forEach((item, index) => {
             const tr = document.createElement('tr');
+            tr.setAttribute('data-awb', item.tracking_number);
 
             const statusKey = item.status.toLowerCase().replace(/[\s_]+/g, '_');
             let badgeClass = 'badge-pending';
@@ -1433,7 +1535,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <td><span class="awb-badge clickable-awb" style="color:${rowTextColor}" title="Click to view journey timeline">${item.tracking_number}</span></td>
                 <td><span class="courier-badge ${getCourierBadgeClass(item.courier)}">${item.courier}</span></td>
                 <td><span style="color:${rowTextColor}">${item.platform_status || '-'}</span></td>
-                <td><span class="badge ${badgeClass}">${item.status}</span></td>
+                <td><span class="badge ${badgeClass} status-cell-badge">${item.status}</span></td>
                 <td><span class="location-badge" style="color:${rowTextColor}">${item.last_location || 'Pending scan'}</span></td>
                 <td><span class="timestamp-badge ${timestampBadgeClass}" style="color:${isTimestampEmpty ? '' : rowTextColor}">${printTimestamp}</span></td>
                 <td><span class="lastsync-badge ${lastSyncBadgeClass}" style="color:${isLastSyncEmpty ? '' : rowTextColor}">${printLastSync}</span></td>
@@ -1503,7 +1605,7 @@ document.addEventListener('DOMContentLoaded', () => {
             tableBody.appendChild(tr);
         });
 
-        lucide.createIcons();
+        lucide.createIcons({ root: tableBody });
         updateSelectionUI();
     }
 

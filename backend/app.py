@@ -931,17 +931,11 @@ async def get_progress(task_id: str):
         
     status, progress, current_action = task_row
     
-    # Get shipments
-    cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data FROM shipments WHERE task_id = ?", (task_id,))
+    # Get shipments (omitting heavy raw_data JSON to make progress polling lightweight and fast)
+    cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
     shipment_rows = cursor.fetchall()
     shipments = []
     for r in shipment_rows:
-        raw_events = []
-        if len(r) > 18 and r[18]:
-            try:
-                raw_events = json.loads(r[18])
-            except Exception:
-                raw_events = []
         shipments.append({
             "channel": r[0] or "",
             "seller_name": r[1] or "",
@@ -960,8 +954,7 @@ async def get_progress(task_id: str):
             "last_location": r[14],
             "timestamp": r[15],
             "last_sync": r[16] or "-",
-            "screenshot": r[17] or "-",
-            "events": raw_events
+            "screenshot": r[17] or "-"
         })
         
     # Get logs
