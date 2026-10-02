@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 
 class DesktopFrameService:
     @staticmethod
@@ -140,74 +139,116 @@ class DesktopFrameService:
         output_path: str = ""
     ) -> str:
         """
-        Forces the Playwright Chrome popup window to the very front (HWND_TOPMOST + Maximized)
-        and captures the 100% REAL live Windows desktop screen (including the real popup
-        Google Chrome window, real URL bar, live tracking page, and real Windows Taskbar)
-        using PIL.ImageGrab.grab().
+        Composites a realistic Chrome browser frame (title bar + address bar + taskbar)
+        directly around the Playwright screenshot (web_img_path).
+        This NEVER uses ImageGrab / OS screen capture — it reads the actual Playwright
+        render buffer so the result is always 100% crisp and independent of window focus.
         """
         if not output_path:
             output_path = web_img_path
 
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                try:
-                    # Windows 8.1 / 10 / 11 Per-Monitor DPI awareness
-                    ctypes.windll.shcore.SetProcessDpiAwareness(2)
-                except Exception:
-                    try:
-                        # Windows 7 DPI awareness fallback
-                        ctypes.windll.user32.SetProcessDPIAware()
-                    except Exception:
-                        pass
-
-                from PIL import ImageGrab
-                DesktopFrameService._attach_default_desktop()
-                # Force the tracking Chrome window to the very front above localhost:8000
-                for _ in range(3):
-                    if DesktopFrameService.bring_tracking_window_to_front():
-                        break
-                    time.sleep(0.15)
-                # Allow Windows DWM 0.45s to finish painting the newly foregrounded topmost window
-                time.sleep(0.45)
-                DesktopFrameService.bring_tracking_window_to_front()
-                time.sleep(0.15)
-                real_screen = ImageGrab.grab()
-                real_screen.save(output_path, format="PNG")
-                print(f"[DesktopFrameService] Captured REAL OS desktop screenshot ({real_screen.size}) to {output_path}")
-                return output_path
-            except Exception as e:
-                print(f"[DesktopFrameService] Real OS screen grab fallback ({e}), using cloud server frame.")
-
-        # Cloud / Linux Headless Server fallback (where no physical Windows monitor exists)
         try:
             from PIL import Image, ImageDraw, ImageFont
             from datetime import datetime
-            if os.path.exists(web_img_path):
-                web_img = Image.open(web_img_path).convert("RGB")
-                w, h = web_img.size
-                top_h = 82
-                bot_h = 48
-                canvas = Image.new("RGB", (w, h + top_h + bot_h), (32, 33, 36))
-                draw = ImageDraw.Draw(canvas)
-                # Chrome tab bar + address bar
-                draw.rectangle([0, 0, w, 40], fill=(32, 33, 36))
-                draw.rounded_rectangle([12, 8, 260, 40], radius=8, fill=(53, 54, 58))
-                draw.text((28, 16), f"{courier_name or 'Courier'} Tracking - {awb}"[:32], fill=(232, 234, 237))
-                draw.rectangle([0, 40, w, top_h], fill=(53, 54, 58))
-                draw.rounded_rectangle([110, 47, w - 60, 75], radius=14, fill=(32, 33, 36))
-                draw.text((130, 54), tracking_url or f"https://tracking/{awb}", fill=(232, 234, 237))
-                # Webpage content
-                canvas.paste(web_img, (0, top_h))
-                # Bottom taskbar
-                ty = h + top_h
-                draw.rectangle([0, ty, w, ty + bot_h], fill=(24, 24, 28))
-                now_dt = datetime.now()
-                draw.text((w - 95, ty + 10), now_dt.strftime("%I:%M %p"), fill=(240, 240, 240))
-                draw.text((w - 95, ty + 26), now_dt.strftime("%d-%m-%Y"), fill=(200, 200, 200))
-                canvas.save(output_path, format="PNG")
-        except Exception as fallback_err:
-            print(f"[DesktopFrameService] Cloud fallback note: {fallback_err}")
+            import os as _os
+
+            if not _os.path.exists(web_img_path):
+                return output_path
+
+            web_img = Image.open(web_img_path).convert("RGB")
+            w, h = web_img.size
+
+            # ── Chrome colour palette ────────────────────────────────────────
+            TAB_BG      = (32,  33,  36)   # dark chrome tab strip
+            TAB_ACTIVE  = (255, 255, 255)  # white active-tab background
+            ADDR_BG     = (241, 243, 244)  # address bar bg
+            TEXT_DARK   = (32,  33,  36)   # tab label colour
+            TEXT_URL    = (95, 99, 104)    # url text colour (grey)
+            TEXT_TIME   = (240, 240, 240)
+            TEXT_DATE   = (200, 200, 200)
+            TASKBAR_BG  = (22,  22,  26)
+
+            # ── Dimensions ───────────────────────────────────────────────────
+            TOP_H     = 76   # chrome header height (tab bar 36px + address bar 40px)
+            BOT_H     = 44   # windows taskbar height
+            TAB_H     = 36
+            ADDR_H    = 40
+
+            # Pick best available Windows font, fall back to PIL default
+            font_regular = None
+            font_bold    = None
+            font_small   = None
+            for fp in [
+                "C:/Windows/Fonts/segoeui.ttf",
+                "C:/Windows/Fonts/arial.ttf",
+                "C:/Windows/Fonts/tahoma.ttf",
+            ]:
+                if _os.path.exists(fp):
+                    try:
+                        font_regular = ImageFont.truetype(fp, 13)
+                        font_bold    = ImageFont.truetype(fp, 13)
+                        font_small   = ImageFont.truetype(fp, 11)
+                    except Exception:
+                        pass
+                    break
+
+            # ── Canvas ───────────────────────────────────────────────────────
+            canvas = Image.new("RGB", (w, h + TOP_H + BOT_H), TAB_BG)
+            draw   = ImageDraw.Draw(canvas)
+
+            # ── Tab bar ──────────────────────────────────────────────────────
+            draw.rectangle([0, 0, w, TAB_H], fill=TAB_BG)
+            # Favicon circle (coloured dot simulating site icon)
+            draw.ellipse([14, 10, 28, 24], fill=(66, 133, 244))
+            # Active tab pill
+            tab_label = f"{courier_name} Tracking – {awb}"
+            tab_label = tab_label[:38] + "…" if len(tab_label) > 40 else tab_label
+            draw.rounded_rectangle([8, 4, min(320, w - 8), TAB_H], radius=6, fill=TAB_ACTIVE)
+            draw.text((34, 11), tab_label, fill=TEXT_DARK, font=font_regular)
+            # Close button (×) inside tab
+            draw.text((min(300, w - 26), 11), "×", fill=(150, 150, 150), font=font_regular)
+            # New-tab (+) outside active tab
+            draw.text((min(330, w - 8), 11), "+", fill=(180, 180, 180), font=font_bold)
+
+            # ── Address bar row ───────────────────────────────────────────────
+            addr_y = TAB_H
+            draw.rectangle([0, addr_y, w, addr_y + ADDR_H], fill=TAB_BG)
+            # Back / Forward / Refresh buttons
+            for bx, sym in [(8, "‹"), (30, "›"), (54, "↺")]:
+                draw.text((bx, addr_y + 11), sym, fill=(180, 180, 180), font=font_bold)
+            # Address bar pill
+            addr_pill_x1, addr_pill_x2 = 78, w - 110
+            draw.rounded_rectangle([addr_pill_x1, addr_y + 6, addr_pill_x2, addr_y + 34], radius=14, fill=ADDR_BG)
+            # Lock icon placeholder (📍→🔒)
+            draw.text((addr_pill_x1 + 10, addr_y + 12), "🔒", fill=(95, 99, 104), font=font_small)
+            # URL text (truncated to fit pill width)
+            url_text = tracking_url or f"https://tracking.courier.in/track/{awb}"
+            max_url_chars = max(10, (addr_pill_x2 - addr_pill_x1 - 36) // 7)
+            url_display = url_text[:max_url_chars] + "…" if len(url_text) > max_url_chars else url_text
+            draw.text((addr_pill_x1 + 32, addr_y + 12), url_display, fill=TEXT_URL, font=font_regular)
+            # Right side: Extensions icon + profile + menu (dots)
+            for rx, sym in [(w - 100, "⋮"), (w - 76, "☰"), (w - 48, "⊕")]:
+                draw.text((rx, addr_y + 11), sym, fill=(180, 180, 180), font=font_regular)
+
+            # ── Webpage content ───────────────────────────────────────────────
+            canvas.paste(web_img, (0, TOP_H))
+
+            # ── Windows taskbar ───────────────────────────────────────────────
+            ty = h + TOP_H
+            draw.rectangle([0, ty, w, ty + BOT_H], fill=TASKBAR_BG)
+            # Start button
+            draw.rounded_rectangle([4, ty + 6, 36, ty + BOT_H - 6], radius=4, fill=(66, 133, 244))
+            draw.text((10, ty + 11), "⊞", fill=(255, 255, 255), font=font_bold)
+            # Clock + date (right side)
+            now_dt = datetime.now()
+            draw.text((w - 88, ty + 6),  now_dt.strftime("%I:%M %p"),  fill=TEXT_TIME, font=font_regular)
+            draw.text((w - 88, ty + 22), now_dt.strftime("%d-%m-%Y"), fill=TEXT_DATE, font=font_small)
+
+            canvas.save(output_path, format="PNG")
+            print(f"[DesktopFrameService] Composited crisp Chrome frame ({canvas.size}) → {output_path}")
+
+        except Exception as frame_err:
+            print(f"[DesktopFrameService] Frame composite error: {frame_err}")
 
         return output_path
 

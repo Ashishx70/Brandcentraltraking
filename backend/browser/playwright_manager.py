@@ -89,12 +89,21 @@ class PlaywrightManager:
                     
                     ctx_kwargs = dict(kwargs)
                     ctx_kwargs.pop("viewport", None)
+                    ctx_kwargs.pop("device_scale_factor", None)  # ensure we control this
                     if has_display:
-                        # Use no_viewport=True on Windows 7/10/11 so webpage fills the real maximized browser window
-                        context = await self._browser.new_context(no_viewport=True, **ctx_kwargs)
+                        # Windows: no_viewport=True fills the real maximized window; device_scale_factor=1.5 → HiDPI font clarity
+                        context = await self._browser.new_context(
+                            no_viewport=True,
+                            device_scale_factor=1.5,
+                            **ctx_kwargs
+                        )
                     else:
-                        # On headless Linux live servers, use full HD 1920x1080 viewport
-                        context = await self._browser.new_context(viewport={"width": 1920, "height": 1080}, **ctx_kwargs)
+                        # Headless Linux cloud server: fixed 1920x1080 + 1.5x scale → 2880x1620 render buffer
+                        context = await self._browser.new_context(
+                            viewport={"width": 1920, "height": 1080},
+                            device_scale_factor=1.5,
+                            **ctx_kwargs
+                        )
                     page = await context.new_page()
 
                     # Invisible zero-width space marker in document.title so Win32 EnumWindows finds this exact Chrome window

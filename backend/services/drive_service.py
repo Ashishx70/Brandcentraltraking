@@ -27,7 +27,7 @@ class GoogleAppsScriptRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 class DriveService:
     @staticmethod
-    def compress_image_to_jpeg_base64(image_path: str, quality: int = 88) -> Optional[str]:
+    def compress_image_to_jpeg_base64(image_path: str, quality: int = 95) -> Optional[str]:
         """
         Compresses image into High-Quality JPEG with 4:4:4 color subsampling (subsampling=0)
         to maintain 100% sharp text, barcodes, and dates while reducing file size to ~120-180KB.
@@ -58,7 +58,7 @@ class DriveService:
         if not clean_filename.lower().endswith(".jpg") and not clean_filename.lower().endswith(".jpeg"):
             clean_filename = os.path.splitext(clean_filename)[0] + ".jpg"
 
-        base64_data = DriveService.compress_image_to_jpeg_base64(image_path, quality=88)
+        base64_data = DriveService.compress_image_to_jpeg_base64(image_path, quality=95)
         if not base64_data:
             return None
 

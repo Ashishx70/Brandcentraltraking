@@ -621,7 +621,7 @@ class XpressBeesScraper(BaseScraper):
                             if (parseFloat(cs.paddingBottom) > 14) el.style.paddingBottom = '6px';
                         });
 
-                        document.documentElement.style.zoom = '62%';
+                        document.documentElement.style.zoom = '90%';
                         window.scrollTo(0, 175);
                     }""")
                     await asyncio.sleep(0.6)
