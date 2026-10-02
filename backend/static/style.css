@@ -119,9 +119,9 @@ body {
 .header-stats {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 20px;
     background: #f8fafc;
-    padding: 6px 18px;
+    padding: 8px 24px;
     border-radius: 50px;
     border: 1px solid var(--card-border);
     flex-wrap: wrap;
@@ -131,17 +131,19 @@ body {
 .header-stat {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
+    gap: 7px;
+    font-size: 1.02rem;
 }
 
 .stat-lbl {
-    font-weight: 500;
+    font-weight: 600;
+    font-size: 0.98rem;
     color: var(--text-muted);
 }
 
 .stat-val {
-    font-weight: 700;
+    font-size: 1.14rem;
+    font-weight: 800;
 }
 
 .text-delivered {
@@ -162,45 +164,51 @@ body {
 
 /* Header Live ETA Section (Visible during sync in pehle wali patti) */
 .header-stat-divider {
-    width: 1px;
-    height: 18px;
-    background-color: var(--card-border);
-    margin: 0 4px;
+    width: 2px;
+    height: 22px;
+    background-color: #cbd5e1;
+    margin: 0 6px;
+    border-radius: 2px;
 }
 
 .header-eta-group {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 20px;
 }
 
 .header-stat-eta {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 0.85rem;
+    gap: 7px;
+    font-size: 1.02rem;
 }
 
 .header-eta-icon {
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: 18px;
+    height: 18px;
     flex-shrink: 0;
 }
 
 .text-synced {
     color: #4f46e5;
-    font-weight: 700;
+    font-size: 1.14rem;
+    font-weight: 800;
 }
 
 .text-eta {
     color: #4f46e5;
-    font-weight: 700;
+    font-size: 1.14rem;
+    font-weight: 800;
 }
 
 .text-speed {
     color: #d97706;
-    font-weight: 700;
+    font-size: 1.14rem;
+    font-weight: 800;
 }
 
 /* ── Analog Clock with Continuous Spinning Hands (NOT an hourglass/sand watch) ── */
@@ -208,16 +216,16 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
     line-height: 1;
 }
 
 .analog-clock-svg {
     display: block;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     overflow: visible;
 }
 
