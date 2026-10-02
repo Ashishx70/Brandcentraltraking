@@ -338,22 +338,27 @@
 
                 <!-- Pagination Container -->
                 <div class="pagination-container">
-                    <button class="btn btn-pagination" id="prev-page-btn" disabled>
-                        <i data-lucide="chevron-left"></i> Previous
-                    </button>
-                    <div class="pagination-info">
-                        <span>Page</span>
-                        <span id="current-page-num" class="current-page-label">1</span>
-                        <span>of</span>
-                        <span id="total-pages-num" class="total-pages-label">1</span>
+                    <div class="pagination-left">
+                        <button class="btn-page-nav" id="first-page-btn" title="First Page">«</button>
+                        <button class="btn-page-nav" id="prev-page-btn" title="Previous Page" disabled>‹</button>
+                        <div class="page-pills" id="page-pills"></div>
+                        <button class="btn-page-nav" id="next-page-btn" title="Next Page" disabled>›</button>
+                        <button class="btn-page-nav" id="last-page-btn" title="Last Page">»</button>
+                        <div class="pagination-go-to">
+                            <span>Go to:</span>
+                            <input type="number" id="goto-page-input" min="1" value="1">
+                            <button class="btn-go" id="goto-page-btn">Go</button>
+                        </div>
                     </div>
-                    <button class="btn btn-pagination" id="next-page-btn" disabled>
-                        Next <i data-lucide="chevron-right"></i>
-                    </button>
-                    <div class="pagination-go-to">
-                        <span>Go to page:</span>
-                        <input type="number" id="goto-page-input" min="1" value="1">
-                        <button class="btn btn-go" id="goto-page-btn">Go</button>
+                    <div class="pagination-right">
+                        <span>Show</span>
+                        <select id="rows-per-page-select" class="rows-per-page-select">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                        <span id="entries-label">entries</span>
                     </div>
                 </div>
             </section>

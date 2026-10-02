@@ -42,10 +42,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // Pagination Elements
     const prevPageBtn = document.getElementById('prev-page-btn');
     const nextPageBtn = document.getElementById('next-page-btn');
-    const currentPageNum = document.getElementById('current-page-num');
-    const totalPagesNum = document.getElementById('total-pages-num');
+    const firstPageBtn = document.getElementById('first-page-btn');
+    const lastPageBtn = document.getElementById('last-page-btn');
+    const pagePillsEl = document.getElementById('page-pills');
     const gotoPageInput = document.getElementById('goto-page-input');
     const gotoPageBtn = document.getElementById('goto-page-btn');
+    const rowsPerPageSelect = document.getElementById('rows-per-page-select');
+    // Legacy refs kept as no-ops so nothing else breaks
+    const currentPageNum = { textContent: '' };
+    const totalPagesNum  = { textContent: '' };
     
     // Stats elements
     const statTotal = document.getElementById('stat-total');
@@ -1278,36 +1283,90 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCurrentPage();
     }
 
-    function renderCurrentPage() {
-        const total = state.filteredShipments.length;
-        const totalPages = Math.ceil(total / state.rowsPerPage) || 1;
-        
-        if (state.currentPage > totalPages) {
-            state.currentPage = totalPages;
-        }
-        if (state.currentPage < 1) {
-            state.currentPage = 1;
-        }
+    // ── Render page number pills with smart ellipsis ──────────────────────
+    function renderPagePills(currentPage, totalPages) {
+        pagePillsEl.innerHTML = '';
+        if (totalPages <= 1) return;
 
-        // Update labels
-        currentPageNum.textContent = state.currentPage;
-        totalPagesNum.textContent = totalPages;
-        gotoPageInput.max = totalPages;
+        // Build list of page numbers to show (with null = ellipsis)
+        const pages = [];
+        const delta = 2; // pages either side of current
+        const left  = Math.max(2, currentPage - delta);
+        const right = Math.min(totalPages - 1, currentPage + delta);
+
+        pages.push(1);
+        if (left > 2) pages.push(null);          // ellipsis before
+        for (let i = left; i <= right; i++) pages.push(i);
+        if (right < totalPages - 1) pages.push(null); // ellipsis after
+        if (totalPages > 1) pages.push(totalPages);
+
+        pages.forEach(p => {
+            if (p === null) {
+                const span = document.createElement('span');
+                span.className = 'page-pill ellipsis';
+                span.textContent = '…';
+                pagePillsEl.appendChild(span);
+            } else {
+                const btn = document.createElement('button');
+                btn.className = 'page-pill' + (p === currentPage ? ' active' : '');
+                btn.textContent = p;
+                if (p !== currentPage) {
+                    btn.addEventListener('click', () => {
+                        state.currentPage = p;
+                        renderCurrentPage();
+                        saveSessionState();
+                    });
+                }
+                pagePillsEl.appendChild(btn);
+            }
+        });
+    }
+
+    function renderCurrentPage() {
+        const total      = state.filteredShipments.length;
+        const totalPages = Math.ceil(total / state.rowsPerPage) || 1;
+
+        if (state.currentPage > totalPages) state.currentPage = totalPages;
+        if (state.currentPage < 1)          state.currentPage = 1;
+
+        // Nav button states
+        const onFirst = state.currentPage === 1;
+        const onLast  = state.currentPage === totalPages;
+        firstPageBtn.disabled = onFirst;
+        prevPageBtn.disabled  = onFirst;
+        nextPageBtn.disabled  = onLast;
+        lastPageBtn.disabled  = onLast;
+
+        // Go-to input sync
+        gotoPageInput.max   = totalPages;
         gotoPageInput.value = state.currentPage;
 
-        // Buttons state
-        prevPageBtn.disabled = (state.currentPage === 1);
-        nextPageBtn.disabled = (state.currentPage === totalPages);
+        // Numbered pills
+        renderPagePills(state.currentPage, totalPages);
 
-        // Slice data
-        const start = (state.currentPage - 1) * state.rowsPerPage;
-        const end = start + state.rowsPerPage;
+        // "Show X entries" label hint (optional live total)
+        const entriesLabel = document.getElementById('entries-label');
+        if (entriesLabel) {
+            entriesLabel.textContent = `entries  (${total} total)`;
+        }
+
+        // Slice data for this page
+        const start    = (state.currentPage - 1) * state.rowsPerPage;
+        const end      = start + state.rowsPerPage;
         const pageData = state.filteredShipments.slice(start, end);
 
         renderTable(pageData);
     }
 
-    // Pagination Listeners
+    // ── Pagination event listeners ────────────────────────────────────────
+    firstPageBtn.addEventListener('click', () => {
+        if (state.currentPage !== 1) {
+            state.currentPage = 1;
+            renderCurrentPage();
+            saveSessionState();
+        }
+    });
+
     prevPageBtn.addEventListener('click', () => {
         if (state.currentPage > 1) {
             state.currentPage--;
@@ -1325,24 +1384,38 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
+    lastPageBtn.addEventListener('click', () => {
+        const totalPages = Math.ceil(state.filteredShipments.length / state.rowsPerPage) || 1;
+        if (state.currentPage !== totalPages) {
+            state.currentPage = totalPages;
+            renderCurrentPage();
+            saveSessionState();
+        }
+    });
+
     gotoPageBtn.addEventListener('click', () => {
         const totalPages = Math.ceil(state.filteredShipments.length / state.rowsPerPage) || 1;
         let page = parseInt(gotoPageInput.value);
-        if (isNaN(page) || page < 1) {
-            page = 1;
-        } else if (page > totalPages) {
-            page = totalPages;
-        }
+        if (isNaN(page) || page < 1) page = 1;
+        else if (page > totalPages)   page = totalPages;
         state.currentPage = page;
         renderCurrentPage();
         saveSessionState();
     });
 
     gotoPageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            gotoPageBtn.click();
-        }
+        if (e.key === 'Enter') gotoPageBtn.click();
     });
+
+    // ── Rows-per-page selector ────────────────────────────────────────────
+    rowsPerPageSelect.value = String(state.rowsPerPage);
+    rowsPerPageSelect.addEventListener('change', () => {
+        state.rowsPerPage  = parseInt(rowsPerPageSelect.value) || 50;
+        state.currentPage  = 1;
+        renderCurrentPage();
+        saveSessionState();
+    });
+
 
     function mapStatusFilter(status) {
         status = status.toLowerCase();
