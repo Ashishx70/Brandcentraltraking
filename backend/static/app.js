@@ -173,7 +173,10 @@ document.addEventListener('DOMContentLoaded', () => {
         currentPage: 1,
         rowsPerPage: 50,
         activeColumnFilters: {}, // Excel column filter tracking
-        selectedAwbs: new Set() // Set of selected tracking numbers
+        selectedAwbs: new Set(), // Set of selected tracking numbers
+        activeSelectedAwbs: null, // Set of AWBs currently being tracked (null if tracking all)
+        activeSyncMode: 'all', // 'all', 'selected', or 'awaiting'
+        lastSyncedCount: 0 // Number of shipments targeted in last sync action
     };
 
     function updateDownloadImagesVisibility() {
@@ -348,6 +351,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     state.progress = saved.progress || 0;
                     state.captureScreenshot = false;
                     state.quickCaptureScreenshot = false;
+                    state.activeSelectedAwbs = null;
+                    state.activeSyncMode = 'all';
                     updateModeToggleUI();
 
                     if (saved.fileSelected && saved.fileName) {
@@ -543,6 +548,9 @@ document.addEventListener('DOMContentLoaded', () => {
             if (syncSelectedBtn) syncSelectedBtn.disabled = true;
             progressPanel.style.visibility = 'visible';
             state.isTracking = true;
+            state.activeSelectedAwbs = null;
+            state.activeSyncMode = 'all';
+            state.lastSyncedCount = (state.shipments || []).length;
             state.progress = 0;
             progressBarFill.style.width = '0%';
             progressPercent.textContent = '0%';
@@ -571,6 +579,8 @@ document.addEventListener('DOMContentLoaded', () => {
             alert(`Error starting tracking: ${error.message}`);
             startTrackingBtn.disabled = false;
             state.isTracking = false;
+            state.activeSelectedAwbs = null;
+            state.activeSyncMode = 'all';
             updateSelectionUI();
             saveSessionState();
         }
@@ -586,7 +596,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             if (state.isTracking) return;
 
-            const targetAwbs = awaitingList.map(s => s.tracking_number);
+            const targetAwbs = awaitingList.map(s => String(s.tracking_number).trim()).filter(Boolean);
             if (!state.taskId) {
                 state.taskId = 'task_' + Date.now();
             }
@@ -594,6 +604,10 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 syncStartTime = Date.now();
                 state.isTracking = true;
+                state.activeSelectedAwbs = new Set(targetAwbs);
+                state.activeSyncMode = 'awaiting';
+                state.lastSyncedCount = targetAwbs.length;
+
                 syncPendingBtn.disabled = true;
                 if (syncSelectedBtn) syncSelectedBtn.disabled = true;
                 startTrackingBtn.disabled = true;
@@ -628,6 +642,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncPendingBtn.disabled = false;
                 startTrackingBtn.disabled = false;
                 state.isTracking = false;
+                state.activeSelectedAwbs = null;
+                state.activeSyncMode = 'all';
                 updateSelectionUI();
                 saveSessionState();
             }
@@ -637,13 +653,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // "Sync Selected" button triggers tracking ONLY for selected shipments
     if (syncSelectedBtn) {
         syncSelectedBtn.addEventListener('click', async () => {
-            if (!state.selectedAwbs || state.selectedAwbs.size === 0) {
+            // Collect selected AWBs from state AND directly from checked DOM checkboxes to prevent desync
+            const domSelected = Array.from(document.querySelectorAll('.row-select-checkbox:checked'))
+                .map(cb => cb.getAttribute('data-awb'))
+                .filter(Boolean);
+            
+            const stateSelected = state.selectedAwbs ? Array.from(state.selectedAwbs) : [];
+            const combinedSet = new Set([...stateSelected, ...domSelected].map(x => String(x).trim()).filter(Boolean));
+            const selectedList = Array.from(combinedSet);
+
+            if (selectedList.length === 0) {
                 alert('Please select at least one shipment checkbox to sync.');
                 return;
             }
             if (state.isTracking) return;
 
-            const selectedList = Array.from(state.selectedAwbs);
             if (!state.taskId) {
                 state.taskId = 'task_' + Date.now();
             }
@@ -651,6 +675,10 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 syncStartTime = Date.now();
                 state.isTracking = true;
+                state.activeSelectedAwbs = new Set(selectedList);
+                state.activeSyncMode = 'selected';
+                state.lastSyncedCount = selectedList.length;
+
                 syncSelectedBtn.disabled = true;
                 if (syncPendingBtn) syncPendingBtn.disabled = true;
                 startTrackingBtn.disabled = true;
@@ -685,6 +713,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 syncSelectedBtn.disabled = false;
                 startTrackingBtn.disabled = false;
                 state.isTracking = false;
+                state.activeSelectedAwbs = null;
+                state.activeSyncMode = 'all';
                 updateSelectionUI();
                 saveSessionState();
             }
@@ -806,15 +836,17 @@ document.addEventListener('DOMContentLoaded', () => {
             const res = await fetch(`/api/track/progress?task_id=${state.taskId}`);
             if (!res.ok) {
                 if (res.status === 404) {
-                    // Task lost during server sleep/restart: auto-resume by starting with current shipments
+                    // Task lost during server sleep/restart: auto-resume preserving selected AWBs if any
                     console.log('Task missing in DB on poll, auto-recovering tracking session...');
+                    const recoverSelected = state.activeSelectedAwbs ? Array.from(state.activeSelectedAwbs) : null;
                     await fetch('/api/track/start', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             task_id: state.taskId,
                             shipments: state.shipments,
-                            capture_screenshot: !!state.captureScreenshot
+                            capture_screenshot: !!state.captureScreenshot,
+                            selected_tracking_numbers: recoverSelected
                         })
                     });
                     setTimeout(pollProgress, 1500);
@@ -872,9 +904,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 saveSessionState(true);
                 setTimeout(() => {
                     showSyncCompletedModal();
+                    state.activeSelectedAwbs = null;
+                    state.activeSyncMode = 'all';
                 }, 350);
             } else if (data.status === 'failed') {
                 state.isTracking = false;
+                state.activeSelectedAwbs = null;
+                state.activeSyncMode = 'all';
                 progressText.textContent = 'Sync Failed.';
                 startTrackingBtn.disabled = false;
                 applyFilters(false);
@@ -883,6 +919,8 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (data.status === 'idle') {
                 // Task is idle (e.g. restored from session or paused)
                 state.isTracking = false;
+                state.activeSelectedAwbs = null;
+                state.activeSyncMode = 'all';
                 startTrackingBtn.disabled = false;
                 updateSelectionUI();
                 saveSessionState(true);
@@ -914,14 +952,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
         recalculateStats();
 
-        if (modalStatTotal) modalStatTotal.textContent = state.shipments.length;
+        const modalTitle = document.querySelector('.sync-complete-title');
+        const modalSubtitle = document.querySelector('.sync-complete-subtitle');
+
+        let totalSynced = state.shipments.length;
+        if (state.activeSyncMode === 'selected' && state.lastSyncedCount) {
+            totalSynced = state.lastSyncedCount;
+            if (modalTitle) modalTitle.textContent = 'Selected Sync Completed!';
+            if (modalSubtitle) modalSubtitle.textContent = `Real-time tracking data for ${totalSynced} selected shipment(s) has been successfully updated.`;
+        } else if (state.activeSyncMode === 'awaiting' && state.lastSyncedCount) {
+            totalSynced = state.lastSyncedCount;
+            if (modalTitle) modalTitle.textContent = 'Awaiting Sync Completed!';
+            if (modalSubtitle) modalSubtitle.textContent = `Real-time tracking data for ${totalSynced} awaiting scan shipment(s) has been successfully updated.`;
+        } else {
+            if (modalTitle) modalTitle.textContent = 'Sync All Completed!';
+            if (modalSubtitle) modalSubtitle.textContent = 'Real-time tracking data for all shipments has been successfully synced.';
+        }
+
+        if (modalStatTotal) modalStatTotal.textContent = totalSynced;
         if (modalStatDelivered) modalStatDelivered.textContent = state.stats.delivered || 0;
         if (modalStatTransit) modalStatTransit.textContent = state.stats.transit || 0;
         if (modalStatFailed) modalStatFailed.textContent = state.stats.failed || 0;
 
         const elapsed = syncStartTime ? (Date.now() - syncStartTime) : 0;
         if (modalSyncTime) modalSyncTime.textContent = `Time: ${formatElapsedTime(elapsed)}`;
-        if (modalSyncHits) modalSyncHits.textContent = `API Hits: ${state.stats.api_calls || state.shipments.length}`;
+        if (modalSyncHits) modalSyncHits.textContent = `API Hits: ${state.stats.api_calls || totalSynced}`;
 
         syncCompleteModal.style.display = 'flex';
         lucide.createIcons();
@@ -1446,7 +1501,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             // 6. Sync Button Spinner
-            const isSpinning = state.isTracking && item.status.toLowerCase() === 'pending';
+            const isThisRowTracked = !state.activeSelectedAwbs || state.activeSelectedAwbs.has(item.tracking_number);
+            const isSpinning = state.isTracking && isThisRowTracked && item.status.toLowerCase() === 'pending';
             const syncBtn = tr.querySelector('.btn-sync-single');
             if (syncBtn) {
                 if (isSpinning && !syncBtn.disabled) {
@@ -1507,7 +1563,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const rowTextColor = awbColor.text;
 
             // Spin single sync button if bulk tracking is in progress and this item is still pending
-            const isSpinning = state.isTracking && item.status.toLowerCase() === 'pending';
+            const isThisRowTracked = !state.activeSelectedAwbs || state.activeSelectedAwbs.has(item.tracking_number);
+            const isSpinning = state.isTracking && isThisRowTracked && item.status.toLowerCase() === 'pending';
 
             // Determine screenshot column markup
             const hasScreenshot = item.screenshot && item.screenshot !== '-';

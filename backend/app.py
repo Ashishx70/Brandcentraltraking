@@ -285,7 +285,7 @@ class ExportDirectRequest(BaseModel):
 
 @app.get('/')
 def root():
-    return FileResponse("static/index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 def clean_date_str(val) -> str:
     if not val or pd.isna(val):
@@ -322,6 +322,15 @@ def clean_tracking_number(awb_val) -> str:
         pass
         
     return s
+
+def normalize_awb_key(awb_val) -> str:
+    if awb_val is None or (isinstance(awb_val, float) and pd.isna(awb_val)):
+        return ""
+    s = str(awb_val).strip().upper()
+    if s.endswith(".0"):
+        s = s[:-2]
+    # Keep only alphanumeric characters (removes spaces, hyphens, slashes, etc.)
+    return "".join(c for c in s if c.isalnum())
 
 def find_col_value(row, aliases) -> str:
     # Normalized search over row keys
@@ -570,13 +579,32 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
         })
 
     if selected_tracking_numbers:
-        selected_set = {str(x).strip().upper() for x in selected_tracking_numbers if str(x).strip()}
-        shipments_to_track = [s for s in shipments if str(s["tracking_number"]).strip().upper() in selected_set]
+        selected_clean = [str(x).strip() for x in selected_tracking_numbers if x and str(x).strip()]
+        selected_keys = {normalize_awb_key(x) for x in selected_clean if normalize_awb_key(x)}
+        
+        # 1. Match by normalized alphanumeric key
+        shipments_to_track = [
+            s for s in shipments 
+            if normalize_awb_key(s.get("tracking_number")) in selected_keys
+        ]
+        
+        # 2. Secondary fallback: exact string or clean_tracking_number match
         if not shipments_to_track:
-            raw_set = {str(x).strip() for x in selected_tracking_numbers if str(x).strip()}
-            shipments_to_track = [s for s in shipments if str(s["tracking_number"]).strip() in raw_set]
+            cleaned_set = {clean_tracking_number(x) for x in selected_clean}
+            shipments_to_track = [
+                s for s in shipments 
+                if clean_tracking_number(s.get("tracking_number")) in cleaned_set or str(s.get("tracking_number", "")).strip() in selected_clean
+            ]
+
+        # STRICT SAFETY: Under NO circumstances fall back to all shipments if selective was requested!
         if not shipments_to_track:
-            shipments_to_track = shipments
+            print(f"[TRACKING WARNING] {len(selected_tracking_numbers)} selected AWBs requested but none matched {len(shipments)} records in DB. Halting to prevent full sync.")
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute("UPDATE tasks SET status = ?, progress = 100, current_action = ? WHERE task_id = ?", ("completed", "Selected shipments not found in task", task_id))
+            conn.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, f"None of the {len(selected_tracking_numbers)} selected shipments were found in task records.", "error"))
+            conn.commit()
+            conn.close()
+            return
     else:
         shipments_to_track = shipments
 
@@ -720,7 +748,9 @@ async def query_single_shipment(body: QuerySingleRequest):
 async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTasks):
     task_id = body.task_id
     capture_screenshot = body.capture_screenshot or False
-    selected_tracking_numbers = body.selected_tracking_numbers or None
+    selected_tracking_numbers = [str(x).strip() for x in body.selected_tracking_numbers if x and str(x).strip()] if body.selected_tracking_numbers else None
+    if selected_tracking_numbers and len(selected_tracking_numbers) == 0:
+        selected_tracking_numbers = None
 
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     cursor = conn.cursor()
@@ -732,34 +762,36 @@ async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTa
         cursor.execute("SELECT tracking_number FROM shipments WHERE task_id = ?", (task_id,))
         existing_awbs = set(r[0] for r in cursor.fetchall())
         for s in body.shipments:
-            awb = s.get("tracking_number")
-            if awb and awb not in existing_awbs:
-                cursor.execute("""
-                INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    task_id,
-                    s.get("channel", ""),
-                    s.get("seller_name", ""),
-                    s.get("return_date", ""),
-                    s.get("return_id", ""),
-                    s.get("mp_date", ""),
-                    s.get("days_left", ""),
-                    s.get("invoice_no", ""),
-                    s.get("order_id", ""),
-                    s.get("item_sku", ""),
-                    s.get("amt", ""),
-                    awb,
-                    s.get("courier", "Delhivery"),
-                    s.get("platform_status", ""),
-                    s.get("status", "Pending"),
-                    s.get("last_location", "Awaiting scan"),
-                    s.get("timestamp", "-"),
-                    s.get("last_sync", "-"),
-                    s.get("screenshot", "-"),
-                    json.dumps(s.get("events", []))
-                ))
-                existing_awbs.add(awb)
+            raw_awb = s.get("tracking_number")
+            if raw_awb:
+                awb = clean_tracking_number(raw_awb)
+                if awb and awb not in existing_awbs:
+                    cursor.execute("""
+                    INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        task_id,
+                        s.get("channel", ""),
+                        s.get("seller_name", ""),
+                        s.get("return_date", ""),
+                        s.get("return_id", ""),
+                        s.get("mp_date", ""),
+                        s.get("days_left", ""),
+                        s.get("invoice_no", ""),
+                        s.get("order_id", ""),
+                        s.get("item_sku", ""),
+                        s.get("amt", ""),
+                        awb,
+                        s.get("courier", "Delhivery"),
+                        s.get("platform_status", ""),
+                        s.get("status", "Pending"),
+                        s.get("last_location", "Awaiting scan"),
+                        s.get("timestamp", "-"),
+                        s.get("last_sync", "-"),
+                        s.get("screenshot", "-"),
+                        json.dumps(s.get("events", []))
+                    ))
+                    existing_awbs.add(awb)
     elif not exists:
         conn.close()
         raise HTTPException(status_code=404, detail="Task ID not found")
