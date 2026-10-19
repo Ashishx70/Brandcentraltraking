@@ -94,10 +94,32 @@
             </div>
 
             <div class="header-actions">
+                <!-- Admin Module Switcher (Only visible to Admin) -->
+                <div class="admin-switcher" id="admin-module-switcher" style="display: none;">
+                    <span class="switcher-lbl">View:</span>
+                    <button type="button" class="admin-mod-btn active" data-mod="sale"><i data-lucide="shopping-bag" class="btn-svg-icon"></i> Sale</button>
+                    <button type="button" class="admin-mod-btn" data-mod="return"><i data-lucide="rotate-ccw" class="btn-svg-icon"></i> Return</button>
+                    <button type="button" class="admin-mod-btn" data-mod="all"><i data-lucide="layers" class="btn-svg-icon"></i> All</button>
+                </div>
+
                 <div class="server-status">
                     <span class="status-dot online"></span>
                     <span>API Connected</span>
                 </div>
+
+                <!-- User Profile & Role Badge -->
+                <div class="user-role-badge" id="user-role-badge" style="display: none;">
+                    <span class="role-pill" id="user-role-pill">
+                        <i data-lucide="shield-check" id="user-role-icon" class="role-svg-icon"></i>
+                        <span id="user-role-text">Sale</span>
+                    </span>
+                    <span class="user-email-text" id="user-email-text">sale@brandcentral.in</span>
+                </div>
+
+                <!-- Logout Button -->
+                <button type="button" id="logout-btn" class="header-logout-btn" title="Logout" style="display: none;">
+                    <i data-lucide="log-out"></i>
+                </button>
             </div>
         </header>
 
@@ -618,6 +640,95 @@
                     Close
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- Unassigned Courier Selection Modal -->
+    <div class="modal-overlay" id="unassigned-courier-modal" style="display: none; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(15, 23, 42, 0.7); z-index: 9999; padding: 20px;">
+        <div class="modal-card" style="background: #ffffff; border-radius: 16px; width: 100%; max-width: 480px; padding: 24px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2);">
+            <div class="modal-header" style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+                <div style="width: 42px; height: 42px; border-radius: 10px; background: #fef3c7; display: flex; align-items: center; justify-content: center; color: #d97706;">
+                    <i data-lucide="help-circle" style="width: 22px; height: 22px;"></i>
+                </div>
+                <div>
+                    <h3 style="margin: 0; font-size: 1.15rem; color: #0f172a; font-weight: 700;">Select Courier Partner</h3>
+                    <span style="font-size: 0.82rem; color: #64748b;">Action required for unassigned tracking numbers</span>
+                </div>
+            </div>
+
+            <div class="modal-body" style="padding: 10px 0 18px 0;">
+                <p style="font-size: 0.9rem; color: #334155; margin: 0 0 14px 0; line-height: 1.5;">
+                    Found <strong id="unassigned-count-text" style="color: #4f46e5; font-size: 1rem;">0</strong> shipment(s) where the courier partner couldn't be auto-detected. Please select the courier partner to assign:
+                </p>
+
+                <div class="form-group" style="display: flex; flex-direction: column; gap: 6px;">
+                    <label style="font-size: 0.85rem; font-weight: 600; color: #475569;">Courier Partner:</label>
+                    <select id="modal-select-courier" style="padding: 10px 14px; border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: 0.95rem; font-weight: 600; color: #0f172a; outline: none; background: #ffffff;">
+                        <option value="Delhivery">Delhivery</option>
+                        <option value="Shadowfax">Shadowfax</option>
+                        <option value="Xpressbees">Xpressbees</option>
+                        <option value="Ekart">Ekart Logistics</option>
+                        <option value="BlueDart">BlueDart</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 10px; padding-top: 14px; border-top: 1px solid #f1f5f9;">
+                <button type="button" class="btn btn-secondary" id="unassigned-cancel-btn" style="padding: 9px 16px; border: 1px solid #cbd5e1; background: #ffffff; border-radius: 8px; font-size: 0.88rem; font-weight: 600; cursor: pointer; color: #475569;">Skip</button>
+                <button type="button" class="btn btn-primary" id="unassigned-apply-btn" style="background: #4f46e5; color: #ffffff; padding: 9px 20px; font-weight: 600; font-size: 0.88rem; border-radius: 8px; border: none; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="check" style="width: 16px; height: 16px;"></i> Assign & Proceed
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Screen Overlay -->
+    <div class="login-overlay" id="login-overlay" style="display: none;">
+        <div class="login-modal-card">
+            <div class="login-brand-header">
+                <img src="/static/icon.png" alt="Brandcentral" class="login-brand-logo">
+                <h2>Brandcentral TrackShip</h2>
+                <p>Enterprise Tracking Authentication</p>
+            </div>
+
+            <!-- Department Selection Tabs -->
+            <div class="dept-selector-wrapper">
+                <span class="dept-sel-label">Select Department Portal</span>
+                <div class="dept-tabs-group">
+                    <button type="button" class="dept-tab-btn active" data-email="admin@brandcentral.in" data-role="admin">
+                        <i data-lucide="shield-check" class="tab-svg-icon"></i>
+                        <span>Admin</span>
+                    </button>
+                    <button type="button" class="dept-tab-btn" data-email="sale@brandcentral.in" data-role="sale">
+                        <i data-lucide="shopping-bag" class="tab-svg-icon"></i>
+                        <span>Sale</span>
+                    </button>
+                    <button type="button" class="dept-tab-btn" data-email="return@brandcentral.in" data-role="return">
+                        <i data-lucide="rotate-ccw" class="tab-svg-icon"></i>
+                        <span>Return</span>
+                    </button>
+                </div>
+            </div>
+            
+            <form id="login-form" class="login-form-body" onsubmit="return false;">
+                <div class="login-input-group">
+                    <label for="login-email"><i data-lucide="mail"></i> Email Address</label>
+                    <input type="email" id="login-email" value="admin@brandcentral.in" placeholder="name@brandcentral.in" required autocomplete="username">
+                </div>
+                <div class="login-input-group">
+                    <label for="login-password"><i data-lucide="lock"></i> Password</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="login-password" placeholder="Enter portal password" required autocomplete="current-password">
+                        <button type="button" id="toggle-pwd-btn" class="toggle-pwd-btn" title="Show/Hide Password">
+                            <i data-lucide="eye" id="toggle-pwd-icon"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="login-error-msg" class="login-error-banner" style="display: none;"></div>
+                <button type="submit" id="login-submit-btn" class="login-submit-btn">
+                    <i data-lucide="log-in"></i> Sign In to Portal
+                </button>
+            </form>
         </div>
     </div>
 

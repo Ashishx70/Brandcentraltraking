@@ -920,6 +920,12 @@ input:checked + .slider:before {
     color: #475569;
 }
 
+.courier-unassigned {
+    background-color: #fef3c7;
+    color: #b45309;
+    border: 1px dashed #f59e0b;
+}
+
 /* Buttons */
 .btn {
     display: inline-flex;
@@ -2372,4 +2378,376 @@ input:checked + .slider:before {
     cursor: not-allowed;
     opacity: 0.6;
 }
+
+/* ==========================================================================
+   Multi-Tenancy & Login Portal Styles (Admin, Sale, Return)
+   ========================================================================== */
+
+.login-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(15, 23, 42, 0.78);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 99999;
+    padding: 20px;
+}
+
+.login-modal-card {
+    background: #ffffff;
+    border-radius: 16px;
+    width: 100%;
+    max-width: 440px;
+    padding: 36px 32px;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(226, 232, 240, 0.8);
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.login-brand-header {
+    text-align: center;
+    margin-bottom: 26px;
+}
+
+.login-brand-logo {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    object-fit: contain;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);
+}
+
+.login-brand-header h2 {
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin: 0 0 6px 0;
+}
+
+.login-brand-header p {
+    font-size: 0.9rem;
+    color: #64748b;
+    margin: 0;
+}
+
+.login-form-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.login-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.login-input-group label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #334155;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.login-input-group label i {
+    width: 15px;
+    height: 15px;
+    color: #6366f1;
+}
+
+.login-input-group input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid #cbd5e1;
+    border-radius: 10px;
+    font-size: 0.95rem;
+    color: #0f172a;
+    transition: all 0.2s ease;
+    outline: none;
+    box-sizing: border-box;
+}
+
+.login-input-group input:focus {
+    border-color: #6366f1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.login-error-banner {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    text-align: center;
+}
+
+.login-submit-btn {
+    margin-top: 6px;
+    width: 100%;
+    padding: 12px;
+    background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%);
+    color: #ffffff;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.login-submit-btn:hover {
+    background: linear-gradient(135deg, #4338ca 0%, #312e81 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.4);
+}
+
+/* Department Selection Tabs */
+.dept-selector-wrapper {
+    margin-bottom: 20px;
+}
+
+.dept-sel-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: block;
+    margin-bottom: 8px;
+    text-align: center;
+}
+
+.dept-tabs-group {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    background: #f1f5f9;
+    padding: 4px;
+    border-radius: 12px;
+}
+
+.dept-tab-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 6px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dept-tab-btn .tab-svg-icon {
+    width: 18px;
+    height: 18px;
+    stroke-width: 2.2;
+}
+
+.dept-tab-btn:hover {
+    color: #1e293b;
+    background: rgba(255, 255, 255, 0.6);
+}
+
+.dept-tab-btn.active {
+    background: #ffffff;
+    color: #4f46e5;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.dept-tab-btn[data-role="admin"].active {
+    color: #7e22ce;
+}
+
+.dept-tab-btn[data-role="sale"].active {
+    color: #1d4ed8;
+}
+
+.dept-tab-btn[data-role="return"].active {
+    color: #047857;
+}
+
+/* Password Input with Show/Hide Toggle */
+.password-input-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.password-input-wrapper input {
+    padding-right: 42px;
+}
+
+.toggle-pwd-btn {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    transition: all 0.15s ease;
+}
+
+.toggle-pwd-btn:hover {
+    color: #475569;
+    background: #f1f5f9;
+}
+
+.toggle-pwd-btn i {
+    width: 16px;
+    height: 16px;
+}
+
+/* Button & Role SVG Icons */
+.btn-svg-icon {
+    width: 14px;
+    height: 14px;
+    display: inline-block;
+    vertical-align: -2px;
+    margin-right: 4px;
+}
+
+.role-svg-icon {
+    width: 13px;
+    height: 13px;
+    display: inline-block;
+    vertical-align: -1px;
+    margin-right: 3px;
+}
+
+/* Header User Role Badge & Admin Switcher */
+.user-role-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 20px;
+}
+
+.role-pill {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 12px;
+    letter-spacing: 0.5px;
+}
+
+.role-pill.role-admin {
+    background: #faf5ff;
+    color: #7e22ce;
+    border: 1px solid #e9d5ff;
+}
+
+.role-pill.role-sale {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+}
+
+.role-pill.role-return {
+    background: #ecfdf5;
+    color: #047857;
+    border: 1px solid #a7f3d0;
+}
+
+.user-email-text {
+    font-size: 0.82rem;
+    font-weight: 500;
+    color: #475569;
+}
+
+.header-logout-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    color: #ef4444;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.header-logout-btn:hover {
+    background: #fef2f2;
+    border-color: #fecaca;
+    transform: scale(1.05);
+}
+
+.header-logout-btn i {
+    width: 16px;
+    height: 16px;
+}
+
+/* Admin Module Switcher in Header */
+.admin-switcher {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #f1f5f9;
+    padding: 3px 6px;
+    border-radius: 10px;
+    border: 1px solid #e2e8f0;
+}
+
+.switcher-lbl {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: #64748b;
+    margin-left: 4px;
+}
+
+.admin-mod-btn {
+    padding: 4px 12px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 0.82rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.admin-mod-btn:hover {
+    color: #0f172a;
+}
+
+.admin-mod-btn.active {
+    background: #ffffff;
+    color: #4f46e5;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
 

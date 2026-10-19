@@ -1,8 +1,23 @@
 from scrapers.factory import ScraperFactory
 import asyncio
 import json
+import config
 
 class TrackingService:
+    _global_data_sem = None
+    _global_screenshot_sem = None
+
+    @classmethod
+    def _get_semaphore(cls, capture_screenshot: bool):
+        if capture_screenshot:
+            if cls._global_screenshot_sem is None:
+                cls._global_screenshot_sem = asyncio.Semaphore(config.MAX_GLOBAL_SCREENSHOT_WORKERS)
+            return cls._global_screenshot_sem
+        else:
+            if cls._global_data_sem is None:
+                cls._global_data_sem = asyncio.Semaphore(config.MAX_GLOBAL_DATA_WORKERS)
+            return cls._global_data_sem
+
     @staticmethod
     async def track_shipments(shipments, task_id, progress_callback, capture_screenshot: bool = False):
         total = len(shipments)
@@ -17,23 +32,22 @@ class TrackingService:
 
         import time
         start_time = time.time()
-        workers = 1 if capture_screenshot else 3
+        workers = 1 if capture_screenshot else getattr(config, 'MAX_GLOBAL_DATA_WORKERS', 6)
         print(f"\n==================================================")
         print(f"[*] [BATCH TRACKING STARTED] Total AWBs: {total}")
-        print(f"    Workers: {workers} Parallel | Image Mode: {capture_screenshot} | Time: {time.strftime('%H:%M:%S')}")
+        print(f"    Global Workers: {workers} Max Parallel | Image Mode: {capture_screenshot} | Time: {time.strftime('%H:%M:%S')}")
         print(f"==================================================")
 
         completed_count = 0
         lock = asyncio.Lock()
-        # Safe concurrency: 1 worker in screenshot mode (100% CPU/RAM allocated, 0 crashes on Render), 3 in data mode
-        sem = asyncio.Semaphore(workers)
+        active_sem = TrackingService._get_semaphore(capture_screenshot)
 
         async def track_single(shipment):
             nonlocal completed_count
             awb = shipment["tracking_number"]
             courier = shipment["courier"]
 
-            async with sem:
+            async with active_sem:
                 scraper = ScraperFactory.get_scraper(courier, awb=awb)
                 if scraper:
                     req_payload = {
@@ -142,7 +156,14 @@ class TrackingService:
                 chunk = shipments[start_i:end_i]
                 print(f"\n[IMAGE MODE] >>> Starting Batch {chunk_idx + 1}/{total_chunks} (AWBs {start_i + 1} to {end_i})...")
                 tasks = [asyncio.create_task(track_single(s)) for s in chunk]
-                await asyncio.gather(*tasks)
+                try:
+                    await asyncio.gather(*tasks)
+                except asyncio.CancelledError:
+                    print(f"[*] Task {task_id} cancelled during image mode batch. Cancelling child tasks.")
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    raise
 
                 # Terminate Chrome browser process & force garbage collection after each 25 AWBs
                 print(f"[IMAGE MODE] <<< Batch {chunk_idx + 1}/{total_chunks} finished. Closing Chrome & releasing memory...")
@@ -157,8 +178,22 @@ class TrackingService:
                 if chunk_idx + 1 < total_chunks:
                     print(f"[IMAGE MODE] Clean slate ready. Fresh Chrome will launch for Batch {chunk_idx + 2}/{total_chunks}.\n")
         else:
-            tasks = [asyncio.create_task(track_single(s)) for s in shipments]
-            await asyncio.gather(*tasks)
+            # Data Mode: Process in safe memory-friendly chunks of 50 AWBs
+            chunk_size = 50
+            total_chunks = (total + chunk_size - 1) // chunk_size
+            for chunk_idx in range(total_chunks):
+                start_i = chunk_idx * chunk_size
+                end_i = min(start_i + chunk_size, total)
+                chunk = shipments[start_i:end_i]
+                tasks = [asyncio.create_task(track_single(s)) for s in chunk]
+                try:
+                    await asyncio.gather(*tasks)
+                except asyncio.CancelledError:
+                    print(f"[*] Task {task_id} cancelled. Cancelling in-flight requests and releasing workers.")
+                    for t in tasks:
+                        if not t.done():
+                            t.cancel()
+                    raise
 
         # Final safety cleanup for any open browser
         if capture_screenshot:
@@ -174,7 +209,7 @@ class TrackingService:
         time_formatted = f"{mins}m {secs}s" if mins > 0 else f"{elapsed_time:.1f}s"
         avg_speed = elapsed_time / total if total > 0 else 0
         
-        summary_msg = f"[DONE] Batch Finished! Tracked {total} AWBs in {time_formatted} (Avg: {avg_speed:.2f}s/AWB) with 3 Workers"
+        summary_msg = f"[DONE] Batch Finished! Tracked {total} AWBs in {time_formatted} (Avg: {avg_speed:.2f}s/AWB) with {workers} Workers"
         print(f"\n==================================================")
         print(f"[DONE] [BATCH TRACKING COMPLETED]")
         print(f"   Total AWBs  : {total}")

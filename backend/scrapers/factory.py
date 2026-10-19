@@ -22,15 +22,42 @@ class ScraperFactory:
         elif any(k in name for k in ["shadowfax", "shadofex", "shadofax", "shadow", "shado", "sf"]):
             return ShadowfaxScraper()
 
-        # 2. Auto-detect by AWB format if courier name is missing or unknown
+        # 2. Auto-detect by AWB length and starting prefix rules
         if awb_clean:
-            if awb_clean.startswith("SF") or awb_clean.startswith("R") or "AJI" in awb_clean or "MYE" in awb_clean:
+            awb_len = len(awb_clean)
+            p2 = awb_clean[:2]
+
+            # 1. BlueDart: Length 11, prefix in ('76', '65', '78', '82')
+            if awb_len == 11 and p2 in ['76', '65', '78', '82']:
+                return BlueDartScraper()
+
+            # 2. Delhivery: 15 (21, 19), 13 (59, 48), 14 (59)
+            if (awb_len == 15 and p2 in ['21', '19']) or \
+               (awb_len == 13 and p2 in ['59', '48']) or \
+               (awb_len == 14 and p2 == '59'):
+                return DelhiveryScraper()
+
+            # 3. Ekart: 14 (MY, FM)
+            if awb_len == 14 and p2 in ['MY', 'FM']:
+                return EkartScraper()
+
+            # 4. Shadowfax: 14 (R2, R1), 15 (SF), 12 (R2), 13 (SF), 11 (RT)
+            if (awb_len == 14 and p2 in ['R2', 'R1']) or \
+               (awb_len == 15 and p2 == 'SF') or \
+               (awb_len == 12 and p2 == 'R2') or \
+               (awb_len == 13 and p2 == 'SF') or \
+               (awb_len == 11 and p2 == 'RT'):
                 return ShadowfaxScraper()
-            elif len(awb_clean) in [13, 14, 15] and (awb_clean.startswith("13") or awb_clean.startswith("14") or awb_clean.startswith("23")):
+
+            # 5. Xpressbees: 13 (23), 14 (13)
+            if (awb_len == 13 and p2 == '23') or \
+               (awb_len == 14 and p2 == '13'):
                 return XpressBeesScraper()
+
+            # Secondary fallback for other prefixes
+            if awb_clean.startswith("SF") or awb_clean.startswith("R"):
+                return ShadowfaxScraper()
             elif awb_clean.startswith("19") and len(awb_clean) >= 12:
                 return DelhiveryScraper()
-            elif len(awb_clean) in [9, 10, 11] and awb_clean.isdigit():
-                return BlueDartScraper()
 
         return None

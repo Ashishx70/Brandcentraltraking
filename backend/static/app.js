@@ -170,13 +170,35 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     let currentSingleResult = null;
-    const SESSION_KEY = 'trackship_session_state_v3';
+    const AUTH_KEY = 'trackship_auth_user_v2';
+    let currentUser = null;
+    try {
+        const rawAuth = localStorage.getItem(AUTH_KEY);
+        if (rawAuth) currentUser = JSON.parse(rawAuth);
+    } catch(e) {
+        currentUser = null;
+    }
+
+    function getCurrentModule() {
+        if (!currentUser) return 'sale';
+        if (currentUser.role === 'admin') {
+            return state.adminActiveModule || 'sale';
+        }
+        return currentUser.role; // 'sale' or 'return'
+    }
+
+    function getSessionKey() {
+        const role = currentUser ? currentUser.role : 'guest';
+        const mod = getCurrentModule();
+        return `trackship_session_${role}_${mod}`;
+    }
 
     // Application State
     let state = {
         isTracking: false,
         progress: 0,
         taskId: null,
+        adminActiveModule: 'sale',
         captureScreenshot: false, // Bulk / Excel Tracking Mode (Default OFF / Fast Track)
         quickCaptureScreenshot: false, // Quick Single Track Mode (Default OFF / Fast Track)
         shipments: [], // Full list of shipments tracked
@@ -326,7 +348,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 fileName: selectedFileName.textContent,
                 fileSize: selectedFileSize.textContent
             };
-            sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
+            sessionStorage.setItem(getSessionKey(), JSON.stringify(payload));
         } catch (e) {
             console.warn('Failed to save to sessionStorage:', e);
         }
@@ -340,7 +362,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     task_id: state.taskId,
-                    shipments: state.shipments
+                    shipments: state.shipments,
+                    module: getCurrentModule()
                 })
             });
         } catch (e) {
@@ -350,7 +373,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function restoreSessionState() {
         try {
-            const raw = sessionStorage.getItem(SESSION_KEY);
+            const raw = sessionStorage.getItem(getSessionKey());
             if (raw) {
                 const saved = JSON.parse(raw);
                 if (saved && saved.shipments && saved.shipments.length > 0) {
@@ -481,7 +504,7 @@ document.addEventListener('DOMContentLoaded', () => {
         state.isTracking = false;
         state.progress = 0;
 
-        sessionStorage.removeItem(SESSION_KEY);
+        sessionStorage.removeItem(getSessionKey());
         updateStatsUI();
         updateDownloadImagesVisibility();
         applyFilters();
@@ -508,6 +531,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Prepare FormData for server upload
         const formData = new FormData();
         formData.append('file', file);
+        formData.append('module', getCurrentModule());
 
         try {
             const res = await fetch('/api/upload', {
@@ -539,6 +563,12 @@ document.addEventListener('DOMContentLoaded', () => {
             recalculateStats();
             updateDownloadImagesVisibility();
             saveSessionState();
+            
+            // Check if any shipments have unassigned courier
+            const unassignedList = (state.shipments || []).filter(s => s.courier === 'Unassigned' || !s.courier);
+            if (unassignedList.length > 0) {
+                showUnassignedCourierModal(unassignedList.length);
+            }
             
         } catch (error) {
             alert(`Error uploading file: ${error.message}`);
@@ -833,7 +863,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     modalConfirmBtn.addEventListener('click', async () => {
         try {
-            await fetch('/api/clear', { method: 'DELETE' });
+            await fetch(`/api/clear?module=${getCurrentModule()}`, { method: 'DELETE' });
         } catch (e) {
             console.error('Failed to clear server data:', e);
         }
@@ -1547,7 +1577,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function getCourierBadgeClass(courier) {
+        if (!courier) return 'courier-unassigned';
         courier = courier.toLowerCase();
+        if (courier.includes('unassigned')) return 'courier-unassigned';
         if (courier.includes('delhivery')) return 'courier-delhivery';
         if (courier.includes('xpressbees')) return 'courier-xpressbees';
         if (courier.includes('shadowfax')) return 'courier-shadowfax';
@@ -1862,7 +1894,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Auto-load latest data on page refresh if sessionStorage was empty ---
     async function loadLatestData() {
         try {
-            const res = await fetch('/api/latest');
+            const mod = getCurrentModule();
+            const res = await fetch(`/api/latest?module=${mod}`);
             if (!res.ok) return;
             const data = await res.json();
             if (data.task_id && data.shipments && data.shipments.length > 0) {
@@ -1877,9 +1910,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 clearAllBtn.disabled = false;
                 startTrackingBtn.disabled = false;
                 saveSessionState();
+            } else {
+                resetUploadSection();
             }
         } catch (e) {
-            console.log('No previous data to restore from server.');
+            console.log('No previous data to restore from server for module:', getCurrentModule());
         }
     }
 
@@ -2355,10 +2390,260 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Initialize State on Page Load (restore from session storage first)
-    restoreSessionState().then(hasSession => {
-        if (!hasSession) {
-            loadLatestData();
+    // =========================================================================
+    // Auth & Multi-Tenancy Portal Controller (Admin, Sale, Return)
+    // =========================================================================
+    const loginOverlay = document.getElementById('login-overlay');
+    const loginForm = document.getElementById('login-form');
+    const loginEmail = document.getElementById('login-email');
+    const loginPassword = document.getElementById('login-password');
+    const loginErrorMsg = document.getElementById('login-error-msg');
+    const loginSubmitBtn = document.getElementById('login-submit-btn');
+    const userRoleBadge = document.getElementById('user-role-badge');
+    const userRolePill = document.getElementById('user-role-pill');
+    const userEmailText = document.getElementById('user-email-text');
+    const logoutBtn = document.getElementById('logout-btn');
+    const adminModuleSwitcher = document.getElementById('admin-module-switcher');
+
+    function updateAuthUI() {
+        if (!currentUser) {
+            if (loginOverlay) loginOverlay.style.display = 'flex';
+            if (userRoleBadge) userRoleBadge.style.display = 'none';
+            if (logoutBtn) logoutBtn.style.display = 'none';
+            if (adminModuleSwitcher) adminModuleSwitcher.style.display = 'none';
+        } else {
+            if (loginOverlay) loginOverlay.style.display = 'none';
+            if (userRoleBadge) {
+                userRoleBadge.style.display = 'flex';
+                const roleIcon = document.getElementById('user-role-icon');
+                const roleText = document.getElementById('user-role-text');
+                const role = currentUser.role || 'sale';
+
+                if (userRolePill) {
+                    userRolePill.className = `role-pill role-${role}`;
+                }
+                if (roleText) {
+                    roleText.textContent = currentUser.name || role.toUpperCase();
+                }
+                if (roleIcon) {
+                    let iconName = 'shield-check';
+                    if (role === 'sale') iconName = 'shopping-bag';
+                    else if (role === 'return') iconName = 'rotate-ccw';
+                    roleIcon.setAttribute('data-lucide', iconName);
+                }
+                if (userEmailText) {
+                    userEmailText.textContent = currentUser.username;
+                }
+            }
+            if (logoutBtn) logoutBtn.style.display = 'inline-flex';
+
+            // Show Admin Switcher only if Admin
+            if (currentUser.role === 'admin') {
+                if (adminModuleSwitcher) {
+                    adminModuleSwitcher.style.display = 'flex';
+                    updateAdminSwitcherButtons();
+                }
+            } else {
+                if (adminModuleSwitcher) adminModuleSwitcher.style.display = 'none';
+            }
         }
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    function updateAdminSwitcherButtons() {
+        if (!adminModuleSwitcher) return;
+        const current = state.adminActiveModule || 'sale';
+        adminModuleSwitcher.querySelectorAll('.admin-mod-btn').forEach(btn => {
+            if (btn.getAttribute('data-mod') === current) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        });
+    }
+
+    async function performLogin(username, password) {
+        if (loginErrorMsg) loginErrorMsg.style.display = 'none';
+        if (loginSubmitBtn) {
+            loginSubmitBtn.disabled = true;
+            loginSubmitBtn.innerHTML = 'Signing in...';
+        }
+        try {
+            const res = await fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Invalid email or password. Please try again.');
+            }
+            const data = await res.json();
+            currentUser = data.user;
+            localStorage.setItem(AUTH_KEY, JSON.stringify(currentUser));
+            updateAuthUI();
+
+            // Load data for this user
+            resetUploadSection();
+            const hasSession = await restoreSessionState();
+            if (!hasSession) {
+                await loadLatestData();
+            }
+        } catch (err) {
+            if (loginErrorMsg) {
+                loginErrorMsg.textContent = err.message;
+                loginErrorMsg.style.display = 'block';
+            }
+        } finally {
+            if (loginSubmitBtn) {
+                loginSubmitBtn.disabled = false;
+                loginSubmitBtn.innerHTML = '<i data-lucide="log-in"></i> Sign In to Portal';
+                if (window.lucide) window.lucide.createIcons();
+            }
+        }
+    }
+
+    if (loginForm) {
+        loginForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const u = (loginEmail ? loginEmail.value : '').trim();
+            const p = (loginPassword ? loginPassword.value : '').trim();
+            if (u && p) {
+                performLogin(u, p);
+            }
+        });
+    }
+
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', () => {
+            currentUser = null;
+            localStorage.removeItem(AUTH_KEY);
+            sessionStorage.clear();
+            resetUploadSection();
+            updateAuthUI();
+            if (loginEmail) loginEmail.value = 'admin@brandcentral.in';
+            if (loginPassword) loginPassword.value = '';
+            document.querySelectorAll('.dept-tab-btn').forEach((b, idx) => {
+                if (idx === 0) b.classList.add('active');
+                else b.classList.remove('active');
+            });
+        });
+    }
+
+    // Department Selection Tabs (Sets Email & Role, requires typing password)
+    document.querySelectorAll('.dept-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.dept-tab-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            const email = btn.getAttribute('data-email');
+            if (loginEmail) loginEmail.value = email;
+            if (loginPassword) {
+                loginPassword.value = '';
+                loginPassword.focus();
+            }
+            if (loginErrorMsg) loginErrorMsg.style.display = 'none';
+        });
     });
+
+    // Password Eye Visibility Toggle
+    const togglePwdBtn = document.getElementById('toggle-pwd-btn');
+    const togglePwdIcon = document.getElementById('toggle-pwd-icon');
+    if (togglePwdBtn && loginPassword) {
+        togglePwdBtn.addEventListener('click', () => {
+            const isPwd = loginPassword.type === 'password';
+            loginPassword.type = isPwd ? 'text' : 'password';
+            if (togglePwdIcon) {
+                togglePwdIcon.setAttribute('data-lucide', isPwd ? 'eye-off' : 'eye');
+                if (window.lucide) window.lucide.createIcons();
+            }
+        });
+    }
+
+    // Admin module switcher buttons
+    if (adminModuleSwitcher) {
+        adminModuleSwitcher.querySelectorAll('.admin-mod-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const targetMod = btn.getAttribute('data-mod');
+                if (targetMod === state.adminActiveModule) return;
+                state.adminActiveModule = targetMod;
+                updateAdminSwitcherButtons();
+                resetUploadSection();
+                const hasSession = await restoreSessionState();
+                if (!hasSession) {
+                    await loadLatestData();
+                }
+            });
+        });
+    }
+
+    // Unassigned Courier Selection Modal Logic
+    const unassignedCourierModal = document.getElementById('unassigned-courier-modal');
+    const unassignedCountText = document.getElementById('unassigned-count-text');
+    const modalSelectCourier = document.getElementById('modal-select-courier');
+    const unassignedCancelBtn = document.getElementById('unassigned-cancel-btn');
+    const unassignedApplyBtn = document.getElementById('unassigned-apply-btn');
+
+    function showUnassignedCourierModal(count) {
+        if (!unassignedCourierModal) return;
+        if (unassignedCountText) unassignedCountText.textContent = count;
+        unassignedCourierModal.style.display = 'flex';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    function closeUnassignedCourierModal() {
+        if (!unassignedCourierModal) return;
+        unassignedCourierModal.style.display = 'none';
+    }
+
+    if (unassignedCancelBtn) {
+        unassignedCancelBtn.addEventListener('click', () => {
+            closeUnassignedCourierModal();
+        });
+    }
+
+    if (unassignedApplyBtn) {
+        unassignedApplyBtn.addEventListener('click', async () => {
+            const selectedCourier = modalSelectCourier ? modalSelectCourier.value : 'Delhivery';
+            if (!state.taskId) {
+                closeUnassignedCourierModal();
+                return;
+            }
+            try {
+                unassignedApplyBtn.disabled = true;
+                const res = await fetch('/api/shipments/assign_courier', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        task_id: state.taskId,
+                        courier: selectedCourier
+                    })
+                });
+                if (res.ok) {
+                    (state.shipments || []).forEach(s => {
+                        if (s.courier === 'Unassigned' || !s.courier) {
+                            s.courier = selectedCourier;
+                        }
+                    });
+                    applyFilters(false);
+                    recalculateStats();
+                    saveSessionState();
+                }
+            } catch (err) {
+                console.error('Error assigning courier:', err);
+            } finally {
+                unassignedApplyBtn.disabled = false;
+                closeUnassignedCourierModal();
+            }
+        });
+    }
+
+    // Initialize State on Page Load (check authentication first)
+    updateAuthUI();
+    if (currentUser) {
+        restoreSessionState().then(hasSession => {
+            if (!hasSession) {
+                loadLatestData();
+            }
+        });
+    }
 });

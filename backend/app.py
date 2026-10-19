@@ -9,7 +9,7 @@ from datetime import datetime
 import time
 import asyncio
 import sqlite3
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pydantic import BaseModel
 import pandas as pd
 
@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from services.tracking_service import TrackingService
 from scrapers.factory import ScraperFactory
+from config import USERS, SECRET_KEY
 
 app = FastAPI(title="TrackShip API")
 
@@ -217,11 +218,15 @@ def init_db():
     );
     """)
     # Migration step to add new columns if table already exists
-    for col in ["last_sync", "invoice_no", "order_id", "item_sku", "amt", "screenshot", "platform_status", "channel", "seller_name", "return_date", "return_id", "mp_date", "days_left", "raw_data"]:
+    for col in ["last_sync", "invoice_no", "order_id", "item_sku", "amt", "screenshot", "platform_status", "channel", "seller_name", "return_date", "return_id", "mp_date", "days_left", "raw_data", "module"]:
         try:
             cursor.execute(f"ALTER TABLE shipments ADD COLUMN {col} TEXT;")
         except sqlite3.OperationalError:
             pass
+    try:
+        cursor.execute("ALTER TABLE tasks ADD COLUMN module TEXT DEFAULT 'general';")
+    except sqlite3.OperationalError:
+        pass
     # Create logs table
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS logs (
@@ -275,13 +280,45 @@ class SyncSingleRequest(BaseModel):
     platform_status: Optional[str] = ""
     capture_screenshot: Optional[bool] = False
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 class RestoreTaskRequest(BaseModel):
     task_id: str
     shipments: List[dict]
+    module: Optional[str] = "general"
 
 class ExportDirectRequest(BaseModel):
     task_id: Optional[str] = "export"
     shipments: List[dict]
+
+@app.post('/api/login')
+async def api_login(body: LoginRequest):
+    username = body.username.strip().lower()
+    password = body.password.strip()
+    
+    user_info = None
+    for u_email, u_data in USERS.items():
+        if u_email.lower() == username and u_data["password"] == password:
+            user_info = {
+                "username": u_email,
+                "role": u_data["role"],
+                "name": u_data["name"]
+            }
+            break
+            
+    if not user_info:
+        raise HTTPException(status_code=401, detail="Invalid Email or Password")
+        
+    import hashlib
+    token_str = f"{username}:{user_info['role']}:{SECRET_KEY}"
+    token = hashlib.sha256(token_str.encode()).hexdigest()
+    return {
+        "success": True,
+        "token": token,
+        "user": user_info
+    }
 
 @app.get('/')
 def root():
@@ -347,31 +384,59 @@ def normalize_courier_name(raw_courier: str, awb: str = "") -> str:
     name = str(raw_courier or "").lower().replace(" ", "").replace("-", "").replace("_", "")
     awb_clean = str(awb or "").upper().strip()
     
+    # 1. If courier name was written in the uploaded sheet
     if any(k in name for k in ["xpress", "xpess", "xpes", "xbees", "xb"]):
         return "Xpressbees"
     elif any(k in name for k in ["shadowfax", "shadofex", "shadofax", "shadow", "shado", "sf"]):
         return "Shadowfax"
     elif any(k in name for k in ["delhivery", "delivery", "dlv", "delh"]):
         return "Delhivery"
-    elif any(k in name for k in ["bluedart", "blue", "bdart"]):
-        return "Bluedart"
+    elif any(k in name for k in ["bluedart", "blue", "bdart", "blue dart"]):
+        return "BlueDart"
     elif any(k in name for k in ["ekart", "ekl", "myntra", "mysc"]):
         return "Ekart"
         
+    # 2. Smart auto-detection by AWB length and starting prefix rules
     if awb_clean:
-        if awb_clean.startswith("SF") or awb_clean.startswith("R") or "AJI" in awb_clean or "MYE" in awb_clean:
-            return "Shadowfax"
-        elif len(awb_clean) in [13, 14, 15] and (awb_clean.startswith("13") or awb_clean.startswith("14") or awb_clean.startswith("23")):
-            return "Xpressbees"
-        elif awb_clean.startswith("19") and len(awb_clean) >= 12:
+        awb_len = len(awb_clean)
+        p2 = awb_clean[:2]
+
+        # 1. BlueDart: Length 11, prefix in ('76', '65', '78', '82')
+        if awb_len == 11 and p2 in ['76', '65', '78', '82']:
+            return "BlueDart"
+
+        # 2. Delhivery: 15 (21, 19), 13 (59, 48), 14 (59)
+        if (awb_len == 15 and p2 in ['21', '19']) or \
+           (awb_len == 13 and p2 in ['59', '48']) or \
+           (awb_len == 14 and p2 == '59'):
             return "Delhivery"
-        elif len(awb_clean) in [9, 10, 11] and awb_clean.isdigit():
-            return "Bluedart"
-            
-    return raw_courier.title() if raw_courier else "Delhivery"
+
+        # 3. Ekart: 14 (MY, FM)
+        if awb_len == 14 and p2 in ['MY', 'FM']:
+            return "Ekart"
+
+        # 4. Shadowfax: 14 (R2, R1), 15 (SF), 12 (R2), 13 (SF), 11 (RT)
+        if (awb_len == 14 and p2 in ['R2', 'R1']) or \
+           (awb_len == 15 and p2 == 'SF') or \
+           (awb_len == 12 and p2 == 'R2') or \
+           (awb_len == 13 and p2 == 'SF') or \
+           (awb_len == 11 and p2 == 'RT'):
+            return "Shadowfax"
+
+        # 5. Xpressbees: 13 (23), 14 (13)
+        if (awb_len == 13 and p2 == '23') or \
+           (awb_len == 14 and p2 == '13'):
+            return "Xpressbees"
+
+    # If raw_courier was specified but not in 5 main partners, keep its title
+    if raw_courier and str(raw_courier).strip().lower() not in ["-", "", "none", "nan", "null"]:
+        return str(raw_courier).strip().title()
+
+    # Otherwise mark as Unassigned so system prompts the user
+    return "Unassigned"
 
 @app.post('/api/upload')
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), module: str = Form("general")):
     filename = file.filename
     ext = os.path.splitext(filename)[1].lower()
     
@@ -492,12 +557,12 @@ async def upload_file(file: UploadFile = File(...)):
     # Save upload to database
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (task_id, "pending", 0, "Ready to start"))
+    cursor.execute("INSERT INTO tasks (task_id, status, progress, current_action, module) VALUES (?, ?, ?, ?, ?)", (task_id, "pending", 0, "Ready to start", module))
     
     for s in shipments:
         cursor.execute("""
-        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, module)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             task_id,
             s.get("channel", ""),
@@ -517,7 +582,8 @@ async def upload_file(file: UploadFile = File(...)):
             s["last_location"],
             s["timestamp"],
             "-",
-            "-"
+            "-",
+            module
         ))
         
     cursor.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, f"Successfully parsed {filename}. Found {len(shipments)} records.", "success"))
@@ -543,8 +609,46 @@ async def upload_file(file: UploadFile = File(...)):
         "api_calls": today_api_calls
     }
 
-    return {"task_id": task_id, "shipments": shipments, "stats": stats}
+    unassigned_count = sum(1 for s in shipments if s.get("courier") == "Unassigned")
 
+    return {
+        "task_id": task_id,
+        "shipments": shipments,
+        "stats": stats,
+        "module": module,
+        "unassigned_count": unassigned_count
+    }
+
+
+class AssignCourierRequest(BaseModel):
+    task_id: str
+    courier: str
+    tracking_numbers: Optional[List[str]] = None
+
+@app.post('/api/shipments/assign_courier')
+async def assign_courier(body: AssignCourierRequest):
+    task_id = body.task_id
+    courier = body.courier.strip()
+    for std in ["Delhivery", "Shadowfax", "Xpressbees", "Ekart", "BlueDart"]:
+        if std.lower() == courier.lower():
+            courier = std
+            break
+            
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    if body.tracking_numbers and len(body.tracking_numbers) > 0:
+        placeholders = ','.join('?' for _ in body.tracking_numbers)
+        cursor.execute(f"UPDATE shipments SET courier = ? WHERE task_id = ? AND tracking_number IN ({placeholders})", (courier, task_id, *body.tracking_numbers))
+    else:
+        cursor.execute("UPDATE shipments SET courier = ? WHERE task_id = ? AND (courier = 'Unassigned' OR courier = '' OR courier IS NULL)", (courier, task_id))
+    conn.commit()
+    conn.close()
+    return {"status": "success", "courier": courier}
+
+
+# Active running tracking tasks registry (to support immediate cancellation on Clear/Stop)
+active_running_tasks: Dict[str, asyncio.Task] = {}
+task_module_map: Dict[str, str] = {}
 
 # Real background task runner calling TrackingService
 async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False, selected_tracking_numbers: Optional[List[str]] = None):
@@ -655,6 +759,16 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
         conn.execute("UPDATE tasks SET status = ?, progress = 100, current_action = ? WHERE task_id = ?", ("completed", "Tracking completed successfully", task_id))
         conn.commit()
         conn.close()
+    except asyncio.CancelledError:
+        print(f"[*] Task {task_id} was cancelled by user delete/clear. Releasing all worker slots immediately.")
+        try:
+            conn = sqlite3.connect(DB_PATH, timeout=30.0)
+            conn.execute("UPDATE tasks SET status = ?, current_action = ? WHERE task_id = ?", ("cancelled", "Tracking cancelled by user", task_id))
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -664,6 +778,9 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
         cursor.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, f"Fatal tracking engine error: {str(e)}", "error"))
         conn.commit()
         conn.close()
+    finally:
+        active_running_tasks.pop(task_id, None)
+        task_module_map.pop(task_id, None)
 
 
 class QuerySingleRequest(BaseModel):
@@ -810,10 +927,24 @@ async def start_tracking(body: StartTrackRequest, background_tasks: BackgroundTa
     
     cursor.execute("DELETE FROM logs WHERE task_id = ?", (task_id,))
     cursor.execute("INSERT INTO logs (task_id, message, level) VALUES (?, ?, ?)", (task_id, action_msg, "info"))
+    # Look up module for task_id to enable scoped cancellation
+    cursor.execute("SELECT module FROM tasks WHERE task_id = ?", (task_id,))
+    row_m = cursor.fetchone()
+    mod = (row_m[0] if row_m and row_m[0] else "general").lower()
+    task_module_map[task_id] = mod
     conn.commit()
     conn.close()
 
-    background_tasks.add_task(run_tracking_simulation, task_id, capture_screenshot, selected_tracking_numbers)
+    # Cancel any previous task for the same task_id if still active
+    if task_id in active_running_tasks:
+        prev_t = active_running_tasks[task_id]
+        if not prev_t.done():
+            prev_t.cancel()
+
+    # Launch as managed asyncio Task
+    bg_task = asyncio.create_task(run_tracking_simulation(task_id, capture_screenshot, selected_tracking_numbers))
+    active_running_tasks[task_id] = bg_task
+
     return {"status": "started"}
 
 
@@ -1332,12 +1463,13 @@ async def restore_task(body: RestoreTaskRequest):
     task_status = "completed" if (pending_count == 0 and total > 0) else "idle"
     action_text = "All shipments synced" if task_status == "completed" else f"{completed_count}/{total} synced, {pending_count} awaiting scan"
 
-    cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action) VALUES (?, ?, ?, ?)", (body.task_id, task_status, actual_progress, action_text))
+    module = getattr(body, "module", None) or "general"
+    cursor.execute("INSERT OR REPLACE INTO tasks (task_id, status, progress, current_action, module) VALUES (?, ?, ?, ?, ?)", (body.task_id, task_status, actual_progress, action_text, module))
     cursor.execute("DELETE FROM shipments WHERE task_id = ?", (body.task_id,))
     for s in body.shipments:
         cursor.execute("""
-        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO shipments (task_id, channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot, raw_data, module)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             body.task_id,
             s.get("channel", ""),
@@ -1358,7 +1490,8 @@ async def restore_task(body: RestoreTaskRequest):
             s.get("timestamp", "-"),
             s.get("last_sync", "-"),
             s.get("screenshot", "-"),
-            json.dumps(s.get("events", []))
+            json.dumps(s.get("events", [])),
+            module
         ))
     conn.commit()
     conn.close()
@@ -1367,20 +1500,22 @@ async def restore_task(body: RestoreTaskRequest):
 
 
 @app.get('/api/latest')
-async def get_latest_task():
-    """Return the most recent task's shipments so the UI can restore on page refresh."""
+async def get_latest_task(module: Optional[str] = None):
+    """Return the most recent task's shipments filtered by module so the UI can restore on page refresh."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Get the most recent task
-    cursor.execute("SELECT task_id FROM tasks ORDER BY created_at DESC LIMIT 1")
+    if module and module.lower() in ["sale", "return"]:
+        cursor.execute("SELECT task_id, module FROM tasks WHERE LOWER(module) = LOWER(?) ORDER BY created_at DESC LIMIT 1", (module,))
+    else:
+        cursor.execute("SELECT task_id, module FROM tasks ORDER BY created_at DESC LIMIT 1")
     task_row = cursor.fetchone()
 
     if not task_row:
         conn.close()
-        return {"task_id": None, "shipments": [], "stats": {"total": 0, "delivered": 0, "transit": 0, "failed": 0, "api_calls": 0}}
+        return {"task_id": None, "module": module or "general", "shipments": [], "stats": {"total": 0, "delivered": 0, "transit": 0, "failed": 0, "api_calls": 0}}
 
-    task_id = task_row[0]
+    task_id, task_module = task_row
 
     # Get shipments
     cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
@@ -1427,17 +1562,141 @@ async def get_latest_task():
         "api_calls": today_api_calls
     }
 
-    return {"task_id": task_id, "shipments": shipments, "stats": stats}
+    return {"task_id": task_id, "module": task_module or "general", "shipments": shipments, "stats": stats}
+
+
+@app.get('/api/task/{task_id}')
+async def get_task_by_id(task_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT module, status, progress, current_action FROM tasks WHERE task_id = ?", (task_id,))
+    t_row = cursor.fetchone()
+    if not t_row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
+    shipment_rows = cursor.fetchall()
+    shipments = []
+    for r in shipment_rows:
+        shipments.append({
+            "channel": r[0] or "",
+            "seller_name": r[1] or "",
+            "return_date": r[2] or "",
+            "return_id": r[3] or "",
+            "mp_date": r[4] or "",
+            "days_left": r[5] or "",
+            "invoice_no": r[6] or "",
+            "order_id": r[7] or "",
+            "item_sku": r[8] or "",
+            "amt": r[9] or "",
+            "tracking_number": r[10],
+            "courier": r[11],
+            "platform_status": r[12] or "",
+            "status": r[13],
+            "last_location": r[14],
+            "timestamp": r[15],
+            "last_sync": r[16] or "-",
+            "screenshot": r[17] or "-"
+        })
+
+    cursor.execute("SELECT COUNT(*) FROM api_usage WHERE timestamp >= datetime('now', 'start of day');")
+    today_api_calls = cursor.fetchone()[0]
+    conn.close()
+
+    delivered = sum(1 for s in shipments if s["status"].lower() == "delivered")
+    transit = sum(1 for s in shipments if s["status"].lower() in ["in transit", "out for delivery", "picked up", "out for pickup"])
+    failed = sum(1 for s in shipments if "failed" in s["status"].lower() or "invalid" in s["status"].lower() or "error" in s["status"].lower())
+
+    stats = {
+        "total": len(shipments),
+        "delivered": delivered,
+        "transit": transit,
+        "failed": failed,
+        "api_calls": today_api_calls
+    }
+
+    return {"task_id": task_id, "module": t_row[0] or "general", "status": t_row[1], "progress": t_row[2], "shipments": shipments, "stats": stats}
+
+
+@app.get('/api/admin/tasks')
+async def get_admin_tasks(limit: int = 20):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT t.task_id, t.module, t.status, t.progress, t.current_action, t.created_at, COUNT(s.id) as total_shipments
+    FROM tasks t
+    LEFT JOIN shipments s ON t.task_id = s.task_id
+    GROUP BY t.task_id
+    ORDER BY t.created_at DESC
+    LIMIT ?
+    """, (limit,))
+    rows = cursor.fetchall()
+    conn.close()
+    tasks = []
+    for r in rows:
+        tasks.append({
+            "task_id": r[0],
+            "module": r[1] or "general",
+            "status": r[2],
+            "progress": r[3],
+            "current_action": r[4],
+            "created_at": r[5],
+            "total_shipments": r[6]
+        })
+    return {"tasks": tasks}
+
+
+class CancelTrackingRequest(BaseModel):
+    task_id: Optional[str] = None
+    module: Optional[str] = None
+
+@app.post('/api/track/cancel')
+async def cancel_tracking(body: Optional[CancelTrackingRequest] = None):
+    """Explicitly stop and cancel any running background tracking task."""
+    target_task_id = body.task_id if body else None
+    target_module = body.module if body else None
+    cancelled = []
+    for tid, tsk in list(active_running_tasks.items()):
+        t_mod = task_module_map.get(tid, "").lower()
+        if (target_task_id and tid == target_task_id) or \
+           (target_module and t_mod == target_module.lower()) or \
+           (not target_task_id and not target_module):
+            if not tsk.done():
+                print(f"[*] Cancelling background tracking task: {tid} (module: {t_mod})")
+                tsk.cancel()
+                cancelled.append(tid)
+            active_running_tasks.pop(tid, None)
+            task_module_map.pop(tid, None)
+    return {"status": "cancelled", "tasks": cancelled}
 
 
 @app.delete('/api/clear')
-async def clear_all_data():
-    """Delete all tasks, shipments, and logs from the database."""
+async def clear_all_data(module: Optional[str] = None):
+    """Delete all tasks, shipments, and logs from the database (optionally by module), and cancel running background tracking tasks immediately."""
+    cancelled_tasks = []
+    # 1. Immediately cancel active background tasks for the specified module
+    for tid, tsk in list(active_running_tasks.items()):
+        mod = task_module_map.get(tid, "").lower()
+        if not module or module.lower() in ["all", "general", mod]:
+            if not tsk.done():
+                print(f"[*] User cleared {module or 'all'} data. Cancelling active background task: {tid}")
+                tsk.cancel()
+                cancelled_tasks.append(tid)
+            active_running_tasks.pop(tid, None)
+            task_module_map.pop(tid, None)
+
+    # 2. Database cleanup
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM logs")
-    cursor.execute("DELETE FROM shipments")
-    cursor.execute("DELETE FROM tasks")
+    if module and module.lower() in ["sale", "return"]:
+        cursor.execute("DELETE FROM logs WHERE task_id IN (SELECT task_id FROM tasks WHERE LOWER(module) = LOWER(?))", (module,))
+        cursor.execute("DELETE FROM shipments WHERE LOWER(module) = LOWER(?)", (module,))
+        cursor.execute("DELETE FROM tasks WHERE LOWER(module) = LOWER(?)", (module,))
+    else:
+        cursor.execute("DELETE FROM logs")
+        cursor.execute("DELETE FROM shipments")
+        cursor.execute("DELETE FROM tasks")
     conn.commit()
     conn.close()
-    return {"status": "cleared"}
+    return {"status": "cleared", "module": module or "all", "cancelled_tasks": cancelled_tasks}
