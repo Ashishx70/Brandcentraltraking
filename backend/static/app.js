@@ -1040,16 +1040,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateSelectionUI();
                 saveSessionState(true);
             } else {
-                // Poll again in 2.0 seconds (smooth & light on CPU)
-                setTimeout(pollProgress, 2000);
+                // Smart polling: 2.5s when tab is active, 5.0s when tab is in background (saves massive Render bandwidth)
+                const nextPollMs = (typeof document !== 'undefined' && document.hidden) ? 5000 : 2500;
+                setTimeout(pollProgress, nextPollMs);
             }
 
         } catch (error) {
             console.error('Polling error:', error);
             if (state.isTracking) {
-                setTimeout(pollProgress, 2000);
+                setTimeout(pollProgress, 3000);
             }
         }
+    }
+
+    // Immediate refresh when user switches back to this tab during tracking
+    if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden && state.isTracking) {
+                pollProgress();
+            }
+        });
     }
 
     // --- Custom Sync All Completed Modal Functions ---

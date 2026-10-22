@@ -21,11 +21,15 @@ from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPExcept
 from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from services.tracking_service import TrackingService
 from scrapers.factory import ScraperFactory
 from config import USERS, SECRET_KEY
 
 app = FastAPI(title="TrackShip API")
+
+# Enable GZip compression for all responses > 1000 bytes (reduces JSON & text payload by 80-95%)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Allow CORS for development ease
 app.add_middleware(
@@ -40,10 +44,14 @@ app.add_middleware(
 async def add_no_cache_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path.lower()
-    if path.endswith(".js") or path.endswith(".css") or path.endswith(".html") or path == "/" or "/screenshots/" in path:
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
+    if "/screenshots/" in path:
+        # Cache static screenshot images for 1 day
+        response.headers["Cache-Control"] = "public, max-age=86400"
+    elif path.endswith(".js") or path.endswith(".css"):
+        # Allow browser caching with conditional revalidation (ETag/304)
+        response.headers["Cache-Control"] = "no-cache"
+    elif path.endswith(".html") or path == "/":
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
     return response
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -322,7 +330,7 @@ async def api_login(body: LoginRequest):
 
 @app.get('/')
 def root():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return FileResponse(os.path.join(STATIC_DIR, "index.html"), headers={"Cache-Control": "no-cache, must-revalidate"})
 
 def clean_date_str(val) -> str:
     if not val or pd.isna(val):
