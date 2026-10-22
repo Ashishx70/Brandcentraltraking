@@ -657,6 +657,7 @@ async def assign_courier(body: AssignCourierRequest):
 # Active running tracking tasks registry (to support immediate cancellation on Clear/Stop)
 active_running_tasks: Dict[str, asyncio.Task] = {}
 task_module_map: Dict[str, str] = {}
+task_delta_updates: Dict[str, List[dict]] = {}
 
 # Real background task runner calling TrackingService
 async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False, selected_tracking_numbers: Optional[List[str]] = None):
@@ -747,6 +748,19 @@ async def run_tracking_simulation(task_id: str, capture_screenshot: bool = False
                 SET status = ?, last_location = ?, timestamp = ?, last_sync = ?, screenshot = ?, raw_data = ? 
                 WHERE task_id = ? AND tracking_number = ?
                 """, (shipment["status"], shipment["last_location"], shipment["timestamp"], shipment.get("last_sync", "-"), shipment.get("screenshot", "-"), json.dumps(shipment.get("events", [])), task_id, shipment["tracking_number"]))
+                
+                # Buffer delta update for ultra-low bandwidth polling
+                if task_id not in task_delta_updates:
+                    task_delta_updates[task_id] = []
+                task_delta_updates[task_id].append({
+                    "tracking_number": shipment.get("tracking_number"),
+                    "courier": shipment.get("courier"),
+                    "status": shipment.get("status"),
+                    "last_location": shipment.get("last_location"),
+                    "timestamp": shipment.get("timestamp"),
+                    "last_sync": shipment.get("last_sync", "-"),
+                    "screenshot": shipment.get("screenshot", "-")
+                })
             else:
                 for s in shipments_to_track:
                     cursor.execute("""
@@ -1091,8 +1105,8 @@ async def get_shipment_events(awb: str):
 
 
 @app.get('/api/track/progress')
-async def get_progress(task_id: str):
-    conn = sqlite3.connect(DB_PATH)
+async def get_progress(task_id: str, delta: bool = False):
+    conn = sqlite3.connect(DB_PATH, timeout=20.0)
     cursor = conn.cursor()
     cursor.execute("SELECT status, progress, current_action FROM tasks WHERE task_id = ?", (task_id,))
     task_row = cursor.fetchone()
@@ -1102,7 +1116,53 @@ async def get_progress(task_id: str):
         
     status, progress, current_action = task_row
     
-    # Get shipments (omitting heavy raw_data JSON to make progress polling lightweight and fast)
+    # Get logs
+    cursor.execute("SELECT message, level FROM logs WHERE task_id = ? ORDER BY id ASC", (task_id,))
+    log_rows = cursor.fetchall()
+    logs = [{"message": r[0], "level": r[1]} for r in log_rows]
+    cursor.execute("DELETE FROM logs WHERE task_id = ?", (task_id,))
+    
+    # Get today's API calls count
+    cursor.execute("SELECT COUNT(*) FROM api_usage WHERE timestamp >= datetime('now', 'start of day');")
+    today_api_calls = cursor.fetchone()[0]
+
+    # ULTRA-LOW BANDWIDTH DELTA POLLING
+    # When delta=True and task is still running, avoid serializing thousands of rows on every 2-3 seconds!
+    if delta and status not in ("completed", "failed"):
+        cursor.execute("SELECT COUNT(*) FROM shipments WHERE task_id = ?", (task_id,))
+        total_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM shipments WHERE task_id = ? AND LOWER(status) = 'delivered'", (task_id,))
+        delivered = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM shipments WHERE task_id = ? AND LOWER(status) IN ('in transit', 'out for delivery', 'picked up', 'out for pickup')", (task_id,))
+        transit = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM shipments WHERE task_id = ? AND (LOWER(status) LIKE '%fail%' OR LOWER(status) LIKE '%invalid%' OR LOWER(status) LIKE '%error%')", (task_id,))
+        failed = cursor.fetchone()[0]
+        conn.commit()
+        conn.close()
+
+        stats = {
+            "total": total_count,
+            "delivered": delivered,
+            "transit": transit,
+            "failed": failed,
+            "api_calls": today_api_calls
+        }
+
+        # Drain delta buffer
+        updates = task_delta_updates.pop(task_id, [])
+
+        return {
+            "status": status,
+            "progress": progress,
+            "current_action": current_action,
+            "stats": stats,
+            "logs": logs,
+            "is_delta": True,
+            "updates": updates,
+            "shipments": []  # Zero data waste!
+        }
+    
+    # Get full shipments (when completed, failed, or standard poll)
     cursor.execute("SELECT channel, seller_name, return_date, return_id, mp_date, days_left, invoice_no, order_id, item_sku, amt, tracking_number, courier, platform_status, status, last_location, timestamp, last_sync, screenshot FROM shipments WHERE task_id = ?", (task_id,))
     shipment_rows = cursor.fetchall()
     shipments = []
@@ -1128,18 +1188,6 @@ async def get_progress(task_id: str):
             "screenshot": r[17] or "-"
         })
         
-    # Get logs
-    cursor.execute("SELECT message, level FROM logs WHERE task_id = ? ORDER BY id ASC", (task_id,))
-    log_rows = cursor.fetchall()
-    logs = [{"message": r[0], "level": r[1]} for r in log_rows]
-    
-    # Clear logs for this poll (so they are only displayed once on console)
-    cursor.execute("DELETE FROM logs WHERE task_id = ?", (task_id,))
-    
-    # Get today's API calls count
-    cursor.execute("SELECT COUNT(*) FROM api_usage WHERE timestamp >= datetime('now', 'start of day');")
-    today_api_calls = cursor.fetchone()[0]
-    
     conn.commit()
     conn.close()
     
@@ -1156,11 +1204,15 @@ async def get_progress(task_id: str):
         "api_calls": today_api_calls
     }
     
+    task_delta_updates.pop(task_id, None)
+
     return {
         "status": status,
         "progress": progress,
         "current_action": current_action,
         "shipments": shipments,
+        "is_delta": False,
+        "updates": [],
         "stats": stats,
         "logs": logs
     }
@@ -1676,6 +1728,7 @@ async def cancel_tracking(body: Optional[CancelTrackingRequest] = None):
                 cancelled.append(tid)
             active_running_tasks.pop(tid, None)
             task_module_map.pop(tid, None)
+            task_delta_updates.pop(tid, None)
     return {"status": "cancelled", "tasks": cancelled}
 
 
@@ -1693,6 +1746,7 @@ async def clear_all_data(module: Optional[str] = None):
                 cancelled_tasks.append(tid)
             active_running_tasks.pop(tid, None)
             task_module_map.pop(tid, None)
+            task_delta_updates.pop(tid, None)
 
     # 2. Database cleanup
     conn = sqlite3.connect(DB_PATH)

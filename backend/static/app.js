@@ -71,6 +71,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalSyncTime = document.getElementById('modal-sync-time');
     const modalSyncHits = document.getElementById('modal-sync-hits');
     let syncStartTime = null;
+    let pollTimer = null;
+    let isPollingActive = false;
 
     // ETA Elements in Header Stats Bar (Pehle wali patti)
     const headerEtaGroup   = document.getElementById('header-eta-group');
@@ -503,6 +505,11 @@ document.addEventListener('DOMContentLoaded', () => {
         state.activeColumnFilters = {};
         state.isTracking = false;
         state.progress = 0;
+        if (pollTimer) {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+        }
+        isPollingActive = false;
 
         sessionStorage.removeItem(getSessionKey());
         updateStatsUI();
@@ -935,10 +942,22 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function pollProgress() {
-        if (!state.isTracking) return;
+        if (!state.isTracking || isPollingActive) return;
+        isPollingActive = true;
+        if (pollTimer) {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+        }
 
         try {
-            const res = await fetch(`/api/track/progress?task_id=${state.taskId}`);
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 9000);
+
+            const res = await fetch(`/api/track/progress?task_id=${state.taskId}&delta=true`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
             if (!res.ok) {
                 if (res.status === 404) {
                     // Task lost during server sleep/restart: auto-resume preserving selected AWBs if any
@@ -954,7 +973,9 @@ document.addEventListener('DOMContentLoaded', () => {
                             selected_tracking_numbers: recoverSelected
                         })
                     });
-                    setTimeout(pollProgress, 1500);
+                    if (state.isTracking) {
+                        pollTimer = setTimeout(pollProgress, 2000);
+                    }
                     return;
                 }
                 throw new Error('Progress fetch failed');
@@ -962,17 +983,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await res.json();
             
-            // Log latest progress and shipment data in console
-            if (data.shipments && data.shipments.length > 0) {
-                const latestCompleted = data.shipments.filter(s => s.status && s.status !== 'Pending' && s.last_sync && s.last_sync !== '-');
-                if (latestCompleted.length > 0) {
-                    const lastTracked = latestCompleted[latestCompleted.length - 1];
-                    console.log(`%c[BATCH PROGRESS ${data.progress}%] AWB: ${lastTracked.tracking_number} (${lastTracked.courier}) -> Status: ${lastTracked.status}`, 'color: #9333ea; font-weight: bold; font-size: 11px;', lastTracked);
-                }
+            // Handle updates: delta update (bytes) or full update
+            if (data.is_delta && data.updates && data.updates.length > 0) {
+                updateTableDelta(data.updates);
+            } else if (!data.is_delta && data.shipments && data.shipments.length > 0) {
+                state.shipments = data.shipments;
+                updateTableInPlace(state.shipments);
             }
             
-            // Update local state
-            state.shipments = data.shipments;
             const progress = data.progress;
             state.progress = progress;
             if (data.stats) {
@@ -990,15 +1008,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 progressText.textContent = data.current_action || 'Processing...';
             }
 
-            // Fast in-place DOM update instead of destroying and recreating all table rows
             updateStatsUI();
-            updateTableInPlace(state.shipments);
             updateSelectionUI();
             updateETA(state.shipments);   // ← ETA update
             saveSessionState(false);
 
             if (data.status === 'completed') {
                 state.isTracking = false;
+                if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
                 progressBarFill.style.width = '100%';
                 progressPercent.textContent = '100%';
                 progressText.textContent = 'Sync Completed!';
@@ -1018,6 +1035,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 350);
             } else if (data.status === 'failed') {
                 state.isTracking = false;
+                if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
                 state.activeSelectedAwbs = null;
                 state.activeSyncMode = 'all';
                 progressText.textContent = 'Sync Failed.';
@@ -1031,6 +1049,7 @@ document.addEventListener('DOMContentLoaded', () => {
             } else if (data.status === 'idle') {
                 // Task is idle (e.g. restored from session or paused)
                 state.isTracking = false;
+                if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
                 state.activeSelectedAwbs = null;
                 state.activeSyncMode = 'all';
                 startTrackingBtn.disabled = false;
@@ -1040,23 +1059,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 updateSelectionUI();
                 saveSessionState(true);
             } else {
-                // Smart polling: 2.5s when tab is active, 5.0s when tab is in background (saves massive Render bandwidth)
-                const nextPollMs = (typeof document !== 'undefined' && document.hidden) ? 5000 : 2500;
-                setTimeout(pollProgress, nextPollMs);
+                // Ultra-efficient polling: 3s when tab is active, 6s when tab is in background
+                const nextPollMs = (typeof document !== 'undefined' && document.hidden) ? 6000 : 3000;
+                pollTimer = setTimeout(pollProgress, nextPollMs);
             }
 
         } catch (error) {
             console.error('Polling error:', error);
             if (state.isTracking) {
-                setTimeout(pollProgress, 3000);
+                pollTimer = setTimeout(pollProgress, 3500);
             }
+        } finally {
+            isPollingActive = false;
         }
     }
 
-    // Immediate refresh when user switches back to this tab during tracking
+    // Refresh immediately when returning to tab, without spawning duplicate pollers
     if (typeof document !== 'undefined') {
         document.addEventListener('visibilitychange', () => {
-            if (!document.hidden && state.isTracking) {
+            if (!document.hidden && state.isTracking && !isPollingActive) {
+                if (pollTimer) clearTimeout(pollTimer);
                 pollProgress();
             }
         });
@@ -1645,6 +1667,119 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // --- Helper UI Renderers ---
+
+    function updateTableDelta(updates) {
+        if (!tableBody || !updates || updates.length === 0) return;
+
+        // Build fast lookup map of updates
+        const updatesMap = new Map();
+        for (let i = 0; i < updates.length; i++) {
+            if (updates[i] && updates[i].tracking_number) {
+                updatesMap.set(updates[i].tracking_number, updates[i]);
+            }
+        }
+
+        // 1. Update in-place in local state.shipments
+        if (state.shipments && state.shipments.length > 0) {
+            for (let i = 0; i < state.shipments.length; i++) {
+                const s = state.shipments[i];
+                const up = updatesMap.get(s.tracking_number);
+                if (up) {
+                    if (up.status !== undefined) s.status = up.status;
+                    if (up.last_location !== undefined) s.last_location = up.last_location;
+                    if (up.timestamp !== undefined) s.timestamp = up.timestamp;
+                    if (up.last_sync !== undefined) s.last_sync = up.last_sync;
+                    if (up.screenshot !== undefined) s.screenshot = up.screenshot;
+                }
+            }
+        }
+
+        // 2. Update in-place in filteredShipments
+        if (state.filteredShipments && state.filteredShipments.length > 0) {
+            for (let i = 0; i < state.filteredShipments.length; i++) {
+                const s = state.filteredShipments[i];
+                const up = updatesMap.get(s.tracking_number);
+                if (up) {
+                    if (up.status !== undefined) s.status = up.status;
+                    if (up.last_location !== undefined) s.last_location = up.last_location;
+                    if (up.timestamp !== undefined) s.timestamp = up.timestamp;
+                    if (up.last_sync !== undefined) s.last_sync = up.last_sync;
+                    if (up.screenshot !== undefined) s.screenshot = up.screenshot;
+                }
+            }
+        }
+
+        // 3. Fast direct DOM update targeted ONLY at the rows that updated
+        for (let i = 0; i < updates.length; i++) {
+            const item = updates[i];
+            if (!item || !item.tracking_number) continue;
+            let tr = null;
+            try {
+                const escapedAwb = CSS.escape(String(item.tracking_number));
+                tr = tableBody.querySelector(`tr[data-awb="${escapedAwb}"]`);
+            } catch (e) {
+                tr = Array.from(tableBody.querySelectorAll('tr[data-awb]')).find(r => r.getAttribute('data-awb') === item.tracking_number);
+            }
+            if (!tr) continue;
+
+            // Status Badge
+            const statusCell = tr.querySelector('.status-cell-badge');
+            if (statusCell && item.status && statusCell.textContent !== item.status) {
+                const statusKey = item.status.toLowerCase().replace(/[\s_]+/g, '_');
+                let badgeClass = 'badge-pending';
+                if (statusKey === 'delivered') badgeClass = 'badge-delivered';
+                else if (statusKey.includes('transit') || statusKey.includes('picked') || statusKey.includes('out_for')) badgeClass = 'badge-transit';
+                else if (statusKey === 'exception' || statusKey.includes('fail') || statusKey.includes('error') || statusKey.includes('invalid') || statusKey.includes('not_found') || statusKey.includes('not found')) badgeClass = 'badge-exception';
+                
+                statusCell.className = `badge ${badgeClass} status-cell-badge`;
+                statusCell.textContent = item.status;
+            }
+
+            // Location
+            const locCell = tr.querySelector('.location-badge');
+            const newLoc = item.last_location || 'Pending scan';
+            if (locCell && locCell.textContent !== newLoc) {
+                locCell.textContent = newLoc;
+            }
+
+            // Timestamp
+            const timeCell = tr.querySelector('.timestamp-badge');
+            const isTimestampEmpty = !item.timestamp || item.timestamp === '-';
+            const printTimestamp = isTimestampEmpty ? '-' : item.timestamp;
+            if (timeCell && timeCell.textContent !== printTimestamp) {
+                timeCell.textContent = printTimestamp;
+                timeCell.className = `timestamp-badge ${isTimestampEmpty ? 'timestamp-empty' : 'timestamp-filled'}`;
+            }
+
+            // Last Sync
+            const syncCell = tr.querySelector('.lastsync-badge');
+            const isLastSyncEmpty = !item.last_sync || item.last_sync === '-';
+            const printLastSync = isLastSyncEmpty ? '-' : item.last_sync;
+            if (syncCell && syncCell.textContent !== printLastSync) {
+                syncCell.textContent = printLastSync;
+                syncCell.className = `lastsync-badge ${isLastSyncEmpty ? 'lastsync-empty' : 'lastsync-filled'}`;
+            }
+
+            // Screenshot
+            const scCell = tr.querySelector('.screenshot-cell');
+            if (scCell) {
+                const hasScreenshot = item.screenshot && item.screenshot !== '-';
+                const hasLink = scCell.querySelector('.has-screenshot');
+                if (hasScreenshot && !hasLink) {
+                    const screenshotUrl = item.screenshot.startsWith('http') ? item.screenshot : `${item.screenshot.split('?')[0]}?t=${Date.now()}`;
+                    scCell.innerHTML = `<a href="${screenshotUrl}" target="_blank" class="gallery-icon-link has-screenshot" title="View & Download Screenshot"><img src="/static/gallery_icon_blue.png?v=3.4.0" alt="Screenshot Available"></a>`;
+                }
+            }
+
+            // Stop row spinner if active
+            const syncBtn = tr.querySelector('.btn-sync-single');
+            if (syncBtn && syncBtn.disabled) {
+                syncBtn.disabled = false;
+                syncBtn.innerHTML = '<i data-lucide="refresh-cw"></i>';
+                lucide.createIcons({ root: syncBtn });
+            }
+        }
+    }
 
     function updateTableInPlace(shipments) {
         if (!tableBody) return;
